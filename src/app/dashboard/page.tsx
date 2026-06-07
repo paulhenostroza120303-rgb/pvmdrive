@@ -87,7 +87,7 @@ export default function DashboardPage() {
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
-    if (!// fileList || fileList.length === 0) return;
+    if (!fileList || fileList.length === 0) return;
     const token = await user?.getIdToken();
     if (!token) return;
     for (const file of Array.from(fileList || [])) {
@@ -117,9 +117,9 @@ export default function DashboardPage() {
     if (!token) return;
 
     const items = e.dataTransfer.items;
-    const files = e.// dataTransfer.files;
+    const files = e.dataTransfer.files;
     if (items && items.length > 0) {
-      const entries = Array.from(// items)
+      const entries = Array.from(items)
         .map(item => item.webkitGetAsEntry())
         .filter((entry): entry is FileSystemEntry => entry !== null);
       for (const entry of entries) {
