@@ -48,8 +48,7 @@ export default function DashboardPage() {
     setLoading(false);
   };
 
-  // ---- SUBIDA VIA CLOUDINARY (Límite alto, Cero error Entity Too Large) ----
-  const uploadFile = async (file: File, folderId: string | null) => {
+  const uploadFile = async (file: File, folderId: string | null, token: string) => {
     const uploadId = crypto.randomUUID();
     setUploads(prev => [...prev, {
       id: uploadId,
@@ -61,55 +60,22 @@ export default function DashboardPage() {
     setShowUploadPanel(true);
 
     try {
-      // 1. Obtener firma de Cloudinary
-      const authRes = await fetch("/api/cloudinary/auth");
-      const authParams = await authRes.json();
-
-      // 2. Subir directamente a Cloudinary
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("api_key", authParams.apiKey);
-      formData.append("timestamp", authParams.timestamp);
-      formData.append("signature", authParams.signature);
+      formData.append("folderId", folderId || "");
 
-      const uploadEndpoint = file.type.startsWith("image/") 
-        ? `https://api.cloudinary.com/v1_1/${authParams.cloudName}/image/upload`
-        : `https://api.cloudinary.com/v1_1/${authParams.cloudName}/raw/upload`;
-
-      const clRes = await fetch(uploadEndpoint, {
+      const serverRes = await fetch("https://pvmdrive-production.up.railway.app/upload", {
         method: "POST",
+        headers: { 
+            "Authorization": `Bearer ${token}`
+        },
         body: formData
       });
 
-      if (!clRes.ok) {
-        const errorData = await clRes.json();
-        console.error("Cloudinary Error Details:", errorData);
-        throw new Error(errorData.error?.message || "Error subiendo a Cloudinary");
+      if (!serverRes.ok) {
+        const errorData = await serverRes.json();
+        throw new Error(errorData.error || "Error subiendo archivo al servidor");
       }
-      const clData = await clRes.json();
-      const fileUrl = clData.secure_url;
-
-      // Actualizar progreso
-      setUploads(prev => prev.map(u => u.id === uploadId ? { ...u, progress: 50 } : u));
-
-      // 3. Notificar a nuestro servidor para mover a Telegram
-      const userToken = await user?.getIdToken();
-      const serverRes = await fetch("/api/files/upload", {
-        method: "POST",
-        headers: { 
-            "Authorization": `Bearer ${userToken}`,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          fileUrl,
-          fileName: file.name,
-          mimeType: file.type,
-          size: file.size,
-          folderId
-        })
-      });
-
-      if (!serverRes.ok) throw new Error("Error moviendo archivo a Telegram");
 
       setUploads(prev => prev.map(u => u.id === uploadId ? { ...u, progress: 100, status: "done" } : u));
       setTimeout(() => setUploads(prev => prev.filter(u => u.id !== uploadId)), 3000);
@@ -121,11 +87,14 @@ export default function DashboardPage() {
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
-    if (!fileList || fileList.length === 0) return;
-    for (const file of Array.from(fileList)) {
-      await uploadFile(file, currentFolderId);
+    if (!// fileList || fileList.length === 0) return;
+    const token = await user?.getIdToken();
+    if (!token) return;
+    for (const file of Array.from(fileList || [])) {
+      await uploadFile(file, currentFolderId, token);
     }
     e.target.value = "";
+    // fetchContents() is called inside uploadFile
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -144,43 +113,45 @@ export default function DashboardPage() {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+    const token = await user?.getIdToken();
+    if (!token) return;
+
     const items = e.dataTransfer.items;
-    const files = e.dataTransfer.files;
+    const files = e.// dataTransfer.files;
     if (items && items.length > 0) {
-      const entries = Array.from(items)
+      const entries = Array.from(// items)
         .map(item => item.webkitGetAsEntry())
         .filter((entry): entry is FileSystemEntry => entry !== null);
       for (const entry of entries) {
-        await processEntry(entry, currentFolderId);
+        await processEntry(entry, currentFolderId, token);
       }
     } else if (files && files.length > 0) {
       for (const file of Array.from(files)) {
-        await uploadFile(file, currentFolderId);
+        await uploadFile(file, currentFolderId, token);
       }
     }
     fetchContents();
   };
 
-  const processEntry = async (entry: FileSystemEntry, parentId: string | null) => {
+  const processEntry = async (entry: FileSystemEntry, parentId: string | null, token: string) => {
     if (entry.isFile) {
       const file = await new Promise<File>((resolve, reject) => {
         (entry as FileSystemFileEntry).file(resolve, reject);
       });
-      await uploadFile(file, parentId);
+      await uploadFile(file, parentId, token);
     } else if (entry.isDirectory) {
-      const folderId = await createFolderInDB(entry.name, parentId);
+      const folderId = await createFolderInDB(entry.name, parentId, token);
       const reader = (entry as FileSystemDirectoryEntry).createReader();
       const subEntries = await new Promise<FileSystemEntry[]>((resolve) => {
         reader.readEntries(resolve);
       });
       for (const sub of subEntries) {
-        await processEntry(sub, folderId);
+        await processEntry(sub, folderId, token);
       }
     }
   };
 
-  const createFolderInDB = async (name: string, parentId: string | null) => {
-    const token = await user?.getIdToken();
+  const createFolderInDB = async (name: string, parentId: string | null, token: string) => {
     const res = await fetch("/api/folders", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -199,7 +170,6 @@ export default function DashboardPage() {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ name, parentId: currentFolderId })
     });
-    // Reset to home if we want or stay here
     fetchContents();
   };
 
@@ -297,7 +267,7 @@ export default function DashboardPage() {
                     <tr key={file.id} className="border-b hover:bg-gray-50 transition">
                       <td className="p-4 flex items-center gap-3">
                         <FileIcon className="h-5 w-5 text-blue-500" />
-                        <span className="font-medium">{file.name}</span>
+                        <span className="font-// name">{file.name}</span>
                       </td>
                       <td className="p-4 text-gray-500 text-sm">{formatSize(file.size)}</td>
                       <td className="p-4 text-right">
@@ -380,7 +350,7 @@ export default function DashboardPage() {
             </>
           ) : (
             <>
-              <button onClick={() => { downloadFile(activeMenu.id); setActiveMenu(null); }} className="flex items-center gap-2 w-full p-2 text-sm hover:bg-gray-100 rounded">
+              <button onClick={() => { downloadFile(activeMenu.id); setActiveMenu(null); }} className="flex items-center gap-2 w-// la descarga se hace mediante redirección al endpoint de la api que ya implementamos
                 <Download className="h-4 w-4" /> Descargar
               </button>
               <button onClick={() => { const f = files.find(x => x.id === activeMenu.id); if(f) renameItem(activeMenu.id, 'file', f.name); }} className="flex items-center gap-2 w-full p-2 text-sm hover:bg-gray-100 rounded">
