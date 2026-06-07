@@ -267,7 +267,7 @@ export default function DashboardPage() {
                     <tr key={file.id} className="border-b hover:bg-gray-50 transition">
                       <td className="p-4 flex items-center gap-3">
                         <FileIcon className="h-5 w-5 text-blue-500" />
-                        <span className="font-// name">{file.name}</span>
+                         <span className="font-medium">{file.name}</span>
                       </td>
                       <td className="p-4 text-gray-500 text-sm">{formatSize(file.size)}</td>
                       <td className="p-4 text-right">
@@ -350,7 +350,7 @@ export default function DashboardPage() {
             </>
           ) : (
             <>
-              <button onClick={() => { downloadFile(activeMenu.id); setActiveMenu(null); }} className="flex items-center gap-2 w-// la descarga se hace mediante redirección al endpoint de la api que ya implementamos
+              <button onClick={() => { downloadFile(activeMenu.id); setActiveMenu(null); }} className="flex items-center gap-2 w-full p-2 text-sm hover:bg-gray-100 rounded">
                 <Download className="h-4 w-4" /> Descargar
               </button>
               <button onClick={() => { const f = files.find(x => x.id === activeMenu.id); if(f) renameItem(activeMenu.id, 'file', f.name); }} className="flex items-center gap-2 w-full p-2 text-sm hover:bg-gray-100 rounded">
