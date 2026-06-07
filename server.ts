@@ -1,0 +1,40 @@
+import express from 'express';
+import multer from 'multer';
+import cors from 'cors';
+import { auth } from './src/lib/firebase-admin';
+import { uploadUserFile } from './src/lib/storage-server';
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Configuración de Multer para manejar archivos en memoria
+const upload = multer({ storage: multer.memoryStorage() });
+
+app.post('/upload', upload.single('file'), async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const token = authHeader.split('Bearer ')[1];
+    const decodedToken = await auth.verifyIdToken(token);
+    const userId = decodedToken.uid;
+    
+    const file = req.file;
+    const folderId = req.body.folderId || null;
+    
+    if (!file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const result = await uploadUserFile(userId, file.buffer, file.originalname, file.mimetype, folderId);
+    
+    res.json(result);
+  } catch (error: any) {
+    console.error("Upload Error:", error);
+    res.status(500).json({ error: error.message || 'Internal Server Error' });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Upload server running on port ${PORT}`));

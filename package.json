@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "start:server": "tsx server.ts",
     "lint": "eslint"
   },
   "dependencies": {
@@ -41,6 +42,7 @@
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.6.0",
     "tailwindcss-animate": "^1.0.7",
+    "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
