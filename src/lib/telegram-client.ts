@@ -28,6 +28,16 @@ export async function getTelegramClient() {
   return client;
 }
 
+// GramJS requiere CustomFile para buffers (no acepta Buffer directamente)
+class CustomFile {
+  constructor(
+    public name: string,
+    public size: number,
+    public path: string | undefined,
+    public buffer: Buffer | undefined
+  ) {}
+}
+
 export async function uploadFileClient(buffer: Buffer, fileName: string): Promise<{
   fileId: string;
   filePath: string;
