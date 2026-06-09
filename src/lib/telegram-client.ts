@@ -1,6 +1,5 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
-import fs from "fs";
 
 const API_ID = Number(process.env.TELEGRAM_API_ID || 0);
 const API_HASH = process.env.TELEGRAM_API_HASH || "";
@@ -13,7 +12,7 @@ export async function getTelegramClient() {
   if (client) return client;
 
   const session = new StringSession(SESSION_STRING);
-  client = new TelegramClient(SESSION_STRING, API_ID, API_HASH, {
+  client = new TelegramClient(session, API_ID, API_HASH, {
     connectionRetries: 5,
   });
 

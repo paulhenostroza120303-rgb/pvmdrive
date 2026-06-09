@@ -1,5 +1,5 @@
 import { db } from "./firebase-admin";
-import { uploadFileClient, deleteMessageClient } from "./telegram-client";
+import { uploadFileClient } from "./telegram-client";
 import type { DriveFile } from "../types";
 
 const FILES_COLLECTION = "files";

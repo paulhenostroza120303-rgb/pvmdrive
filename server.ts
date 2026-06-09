@@ -1,12 +1,9 @@
 import express from 'express';
 import multer from 'multer';
 import cors from 'cors';
-import path from 'path';
 import fs from 'fs';
-import { Readable } from 'stream';
 import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile } from './src/lib/storage-server';
-import { getFileUrl } from './src/lib/telegram-server';
 
 const app = express();
 app.use(cors({
@@ -46,8 +43,16 @@ app.get('/download/:fileId', async (req, res) => {
     res.setHeader('Content-Type', fileData.mimeType || 'application/octet-stream');
 
     if (chunksSnap.empty) {
-      // Archivo simple
-      const url = await getFileUrl(fileData.telegramFileId);
+      // Archivo simple (no fragmentado)
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      if (!botToken) return res.status(500).send('Download not available: Bot token not configured');
+      
+      // Obtener la ruta del archivo desde Telegram
+      const fileInfoRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileData.telegramFileId}`);
+      const fileInfo = await fileInfoRes.json();
+      if (!fileInfo.ok) return res.status(500).send('Could not retrieve file from Telegram');
+      
+      const url = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
       const response = await fetch(url);
       const reader = response.body?.getReader();
       if (!reader) return res.status(500).send('Error reading file stream');
