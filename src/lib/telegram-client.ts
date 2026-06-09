@@ -53,6 +53,7 @@ export async function uploadFileClient(filePath: string, fileName: string, fileS
   const result = await (client as any).sendFile(TARGET_CHANNEL, {
     file: customFile,
     fileName: fileName,
+    fileSize: fileSize,
   });
 
   // En MTProto, el fileId es el ID del mensaje o la referencia al documento
