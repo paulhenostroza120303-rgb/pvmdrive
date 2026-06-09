@@ -19,13 +19,9 @@ export async function getDownloadUrl(fileId: string) {
     throw new Error("File not found");
   }
   
-  // Si tenemos filePath, usamos la URL directa de descarga, sin pasar por getFile
-  if (file.telegramFilePath) {
-    return `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.telegramFilePath}`;
-  }
-  
-  // Fallback para archivos pequeños
-  return getFileUrl(file.telegramFileId);
+  // Ahora todas las descargas pasan por el proxy de Railway para asegurar compatibilidad
+  // y soporte para archivos fragmentados o de cuenta personal.
+  return `https://pvmdrive-production.up.railway.app/download/${fileId}`;
 }
 
 export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileName: string, mimeType: string, folderId?: string) {
