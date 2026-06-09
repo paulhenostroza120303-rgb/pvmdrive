@@ -37,10 +37,13 @@ export async function uploadFileClient(buffer: Buffer, fileName: string): Promis
 }> {
   const client = await getTelegramClient();
   
-  // Usamos la forma más simple: (chat, buffer, options)
-  // Casting a any para evitar conflictos de tipos en el build
-  const result = await (client as any).sendFile(TARGET_CHANNEL, buffer, {
-    fileName: fileName,
+  // Usamos CustomFile obligatoriamente para buffers en GramJS
+  const customFile = new CustomFile(fileName, buffer.length, undefined, buffer);
+  
+  // Pasamos el objeto directamente en la posición de 'file'
+  const result = await (client as any).sendFile(TARGET_CHANNEL, {
+    file: customFile,
+    caption: "",
   });
 
   return {
