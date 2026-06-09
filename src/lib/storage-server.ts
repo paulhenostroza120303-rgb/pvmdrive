@@ -1,6 +1,8 @@
 import { db } from "./firebase-admin";
 import { uploadFile, uploadFileChunked, resolveFilePath, BOT_API_MAX_BYTES } from "./telegram-server";
 import { uploadFileClient, downloadFileClient, hasGramJsConfig } from "./telegram-client";
+import { canAccessFolder, getFolderDoc } from "./sharing";
+import { displayFilename } from "./filename";
 import type { DriveFile } from "../types";
 
 type StorageMethod = "bot" | "gramjs" | "chunked";
@@ -57,7 +59,7 @@ export async function buildFileDownloadResponse(fileId: string) {
   const file = await getFileDoc(fileId);
   if (!file) return null;
 
-  const fileName = file.originalName || file.name;
+  const fileName = displayFilename(file.originalName || file.name);
   const mimeType = file.mimeType || "application/octet-stream";
 
   if (file.storageMethod === "gramjs" || (!file.storageMethod && !file.telegramFilePath && file.telegramMessageId)) {
@@ -189,29 +191,42 @@ export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileNam
   return { id: fileId, ...fileData };
 }
 
-export async function listFolderContents(userId: string, parentId?: string | null) {
-  // Traer archivos
-  let filesQuery: FirebaseFirestore.Query = db.collection(FILES_COLLECTION)
-    .where("ownerId", "==", userId)
-    .where("trashed", "==", false);
+export async function listFolderContents(userId: string, userEmail: string, parentId?: string | null) {
+  if (parentId) {
+    const hasAccess = await canAccessFolder(userId, userEmail, parentId);
+    if (!hasAccess) throw new Error("Forbidden");
+  }
 
-  if (parentId) filesQuery = filesQuery.where("folderId", "==", parentId);
-  else filesQuery = filesQuery.where("folderId", "==", null);
+  const folder = parentId ? await getFolderDoc(parentId) : null;
+  const isOwner = !parentId || folder?.ownerId === userId;
 
-  // Traer carpetas
-  let foldersQuery: FirebaseFirestore.Query = db.collection(FOLDERS_COLLECTION)
-    .where("ownerId", "==", userId)
-    .where("trashed", "==", false);
+  let filesQuery: FirebaseFirestore.Query = db.collection(FILES_COLLECTION).where("trashed", "==", false);
+  let foldersQuery: FirebaseFirestore.Query = db.collection(FOLDERS_COLLECTION).where("trashed", "==", false);
 
-  if (parentId) foldersQuery = foldersQuery.where("parentId", "==", parentId);
-  else foldersQuery = foldersQuery.where("parentId", "==", null);
+  if (parentId) {
+    filesQuery = filesQuery.where("folderId", "==", parentId);
+    foldersQuery = foldersQuery.where("parentId", "==", parentId);
+    if (isOwner) {
+      filesQuery = filesQuery.where("ownerId", "==", userId);
+      foldersQuery = foldersQuery.where("ownerId", "==", userId);
+    }
+  } else {
+    filesQuery = filesQuery.where("ownerId", "==", userId).where("folderId", "==", null);
+    foldersQuery = foldersQuery.where("ownerId", "==", userId).where("parentId", "==", null);
+  }
 
   const [filesSnap, foldersSnap] = await Promise.all([filesQuery.get(), foldersQuery.get()]);
-  
-  const files = filesSnap.docs.map((doc) => ({ id: doc.id, ...doc.data(), type: "file" }));
-  const folders = foldersSnap.docs.map((doc) => ({ id: doc.id, ...doc.data(), type: "folder" }));
-  
-  return { files, folders };
+
+  const mapName = (data: Record<string, unknown>) => ({
+    ...data,
+    name: displayFilename(String(data.name || "")),
+    originalName: data.originalName ? displayFilename(String(data.originalName)) : undefined,
+  });
+
+  const files = filesSnap.docs.map((doc) => ({ id: doc.id, ...mapName(doc.data()), type: "file" }));
+  const folders = foldersSnap.docs.map((doc) => ({ id: doc.id, ...mapName(doc.data()), type: "folder" }));
+
+  return { files, folders, isSharedView: Boolean(parentId && !isOwner) };
 }
 
 export async function getFileDoc(fileId: string) {
@@ -249,7 +264,9 @@ export async function softDeleteItem(id: string, type: 'file' | 'folder') {
   await db.collection(collection).doc(id).update({ trashed: true, deletedAt: new Date() });
 }
 
-export async function renameItem(id: string, type: 'file' | 'folder', newName: string) {
-  const collection = type === 'file' ? FILES_COLLECTION : FOLDERS_COLLECTION;
-  await db.collection(collection).doc(id).update({ name: newName, updatedAt: new Date() });
+export async function renameItem(id: string, type: "file" | "folder", newName: string) {
+  const collection = type === "file" ? FILES_COLLECTION : FOLDERS_COLLECTION;
+  const update: Record<string, unknown> = { name: newName, updatedAt: new Date() };
+  if (type === "file") update.originalName = newName;
+  await db.collection(collection).doc(id).update(update);
 }

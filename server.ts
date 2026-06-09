@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile, buildFileDownloadResponse } from './src/lib/storage-server';
+import { decodeUploadFilename, contentDispositionHeader } from './src/lib/filename';
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -34,7 +35,7 @@ app.get('/download/:fileId', async (req, res) => {
     const download = await buildFileDownloadResponse(fileId);
     if (!download) return res.status(404).send('File not found');
 
-    res.setHeader('Content-Disposition', `attachment; filename="${download.fileName}"`);
+    res.setHeader('Content-Disposition', contentDispositionHeader(download.fileName));
     res.setHeader('Content-Type', download.mimeType);
 
     const reader = download.stream.getReader();
@@ -66,8 +67,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
+    const rawName = req.body.fileName || file.originalname;
+    const fileName = decodeUploadFilename(rawName);
     const fileBuffer = fs.readFileSync(file.path);
-    const result = await uploadUserFile(userId, fileBuffer, file.originalname, file.mimetype, folderId);
+    const result = await uploadUserFile(userId, fileBuffer, fileName, file.mimetype, folderId);
 
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     res.json(result);
