@@ -351,18 +351,27 @@ export default function DashboardPage() {
 
   const downloadFile = async (id: string, fallbackName: string) => {
     const token = await getToken();
-    const res = await fetch(`/api/items/${id}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { alert("No se pudo descargar el archivo"); return; }
-    const blob = await res.blob();
-    const disposition = res.headers.get("Content-Disposition") || "";
-    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
-    const filename = utf8Match ? decodeURIComponent(utf8Match[1]) : fallbackName;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Usar el servidor de Railway directamente para descargar
+    // Railway tiene GramJS configurado para archivos grandes
+    const uploadUrl = process.env.NEXT_PUBLIC_UPLOAD_URL || "https://pvmdrive-production.up.railway.app";
+    try {
+      const res = await fetch(`${uploadUrl}/download/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) { alert("No se pudo descargar el archivo"); return; }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const filename = utf8Match ? decodeURIComponent(utf8Match[1]) : fallbackName;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("No se pudo descargar el archivo");
+    }
   };
 
   const openShareModal = async (id: string, type: "file" | "folder", name: string) => {
