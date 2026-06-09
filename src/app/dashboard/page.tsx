@@ -134,6 +134,8 @@ export default function DashboardPage() {
   };
 
   const processEntry = async (entry: FileSystemEntry, parentId: string | null, token: string) => {
+    if (entry.name.startsWith('.')) return; // Ignorar archivos y carpetas ocultos
+
     if (entry.isFile) {
       const file = await new Promise<File>((resolve, reject) => {
         (entry as FileSystemFileEntry).file(resolve, reject);
