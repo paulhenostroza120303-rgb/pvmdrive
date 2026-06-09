@@ -7,6 +7,7 @@ import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile, buildFileDownloadResponse, getFileDoc } from './src/lib/storage-server';
 import { decodeUploadFilename, contentDispositionHeader } from './src/lib/filename';
 import { canAccessFile } from './src/lib/sharing';
+import { db } from './src/lib/firebase-admin';
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -34,20 +35,30 @@ app.get('/health', (req, res) => {
 
 app.get('/download/:fileId', async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const token = authHeader.split('Bearer ')[1];
-    const decodedToken = await auth.verifyIdToken(token);
-    const userId = decodedToken.uid;
-    const userEmail = decodedToken.email || '';
-
     const { fileId } = req.params;
+    const isPublic = req.query.public === 'true';
 
-    const allowed = await canAccessFile(userId, userEmail, fileId, 'view');
-    if (!allowed) {
-      return res.status(403).json({ error: 'Forbidden' });
+    // Si es descarga pública, verificar que el archivo tenga shareToken
+    if (!isPublic) {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      const token = authHeader.split('Bearer ')[1];
+      const decodedToken = await auth.verifyIdToken(token);
+      const userId = decodedToken.uid;
+      const userEmail = decodedToken.email || '';
+
+      const allowed = await canAccessFile(userId, userEmail, fileId, 'view');
+      if (!allowed) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    } else {
+      // Verificar que el archivo sea público (tenga shareToken)
+      const fileDoc = await getFileDoc(fileId);
+      if (!fileDoc || !fileDoc.shareToken) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
     }
 
     // Obtener metadata del archivo para Content-Length

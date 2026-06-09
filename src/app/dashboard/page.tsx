@@ -9,7 +9,7 @@ import {
   Loader2, Upload, File as FileIcon, Folder as FolderIcon, Plus,
   Trash2, Edit2, Download, ChevronRight, MoreVertical, X, Check, AlertCircle,
   HardDrive, Users, Share2, Home, Menu, Star, Copy, Scissors, ClipboardPaste,
-  Move, Info, FolderInput, StarOff
+  Move, Info, FolderInput, StarOff, Link, CopyCheck
 } from "lucide-react";
 
 interface UploadItem {
@@ -68,6 +68,9 @@ export default function DashboardPage() {
   const [clipboard, setClipboard] = useState<ClipboardItem | null>(null);
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [showDownloadPanel, setShowDownloadPanel] = useState(false);
+  const [publicLink, setPublicLink] = useState<{ token: string; permission: string } | null>(null);
+  const [publicLinkLoading, setPublicLinkLoading] = useState(false);
+  const [publicLinkCopied, setPublicLinkCopied] = useState(false);
   const [infoModal, setInfoModal] = useState<{ id: string; type: "file" | "folder"; name: string } | null>(null);
   const [infoData, setInfoData] = useState<Record<string, unknown> | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -432,14 +435,25 @@ export default function DashboardPage() {
     setShareEmail("");
     setSharePermission("view");
     setShareError("");
+    setPublicLink(null);
+    setPublicLinkCopied(false);
     setShareLoading(true);
     try {
       const token = await getToken();
-      const res = await fetch(`/api/shares?resourceId=${id}&resourceType=${type}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      setExistingShares(data.shares || []);
+      const [sharesRes, linkRes] = await Promise.all([
+        fetch(`/api/shares?resourceId=${id}&resourceType=${type}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/share-links?resourceId=${id}&resourceType=${type}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+      const sharesData = await sharesRes.json();
+      setExistingShares(sharesData.shares || []);
+      const linkData = await linkRes.json();
+      if (linkData.link) {
+        setPublicLink({ token: linkData.link.token, permission: linkData.link.permission });
+      }
     } catch {
       setExistingShares([]);
     } finally {
@@ -491,6 +505,46 @@ export default function DashboardPage() {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (shareModal) openShareModal(shareModal.id, shareModal.type, shareModal.name);
+  };
+
+  const togglePublicLink = async () => {
+    if (!shareModal) return;
+    setPublicLinkLoading(true);
+    try {
+      const token = await getToken();
+      if (publicLink) {
+        // Desactivar link
+        await fetch("/api/share-links", {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ resourceId: shareModal.id, resourceType: shareModal.type }),
+        });
+        setPublicLink(null);
+      } else {
+        // Crear link
+        const res = await fetch("/api/share-links", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ resourceId: shareModal.id, resourceType: shareModal.type, permission: "download" }),
+        });
+        const data = await res.json();
+        if (data.link) {
+          setPublicLink({ token: data.link.token, permission: data.link.permission });
+        }
+      }
+    } catch {
+      // ignorar error
+    } finally {
+      setPublicLinkLoading(false);
+    }
+  };
+
+  const copyPublicLink = () => {
+    if (!publicLink) return;
+    const url = `${window.location.origin}/share/${publicLink.token}`;
+    navigator.clipboard.writeText(url);
+    setPublicLinkCopied(true);
+    setTimeout(() => setPublicLinkCopied(false), 2000);
   };
 
   const openInfoModal = async (id: string, type: "file" | "folder", name: string) => {
@@ -945,7 +999,7 @@ export default function DashboardPage() {
       {shareModal && (
         <>
           <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setShareModal(null)} />
-          <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+          <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Compartir</h3>
               <button onClick={() => setShareModal(null)} className="p-1 hover:bg-gray-100 rounded"><X className="h-5 w-5" /></button>
@@ -954,7 +1008,45 @@ export default function DashboardPage() {
               <Share2 className="h-4 w-4 inline mr-1" />
               {displayFilename(shareModal.name)}
             </p>
+
+            {/* Link público */}
+            <div className="bg-gray-50 rounded-xl p-4 mb-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Link className="h-4 w-4 text-blue-500" />
+                  <span className="text-sm font-medium">Link público</span>
+                </div>
+                <button
+                  onClick={togglePublicLink}
+                  disabled={publicLinkLoading}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${publicLink ? 'bg-blue-600' : 'bg-gray-300'} disabled:opacity-50`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${publicLink ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+              {publicLink && (
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${typeof window !== 'undefined' ? window.location.origin : ''}/share/${publicLink.token}`}
+                    className="flex-1 bg-white border rounded-lg px-3 py-1.5 text-xs text-gray-600 truncate"
+                  />
+                  <button
+                    onClick={copyPublicLink}
+                    className="p-1.5 hover:bg-gray-200 rounded-lg transition shrink-0"
+                    title="Copiar link"
+                  >
+                    {publicLinkCopied ? <CopyCheck className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4 text-gray-500" />}
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-2">Cualquiera con el link puede ver y descargar</p>
+            </div>
+
+            {/* Compartir por email */}
             <div className="space-y-3">
+              <p className="text-xs font-medium text-gray-500 uppercase">Compartir con personas</p>
               <input
                 type="email"
                 placeholder="correo@ejemplo.com"
