@@ -1,5 +1,5 @@
 import { db } from "./firebase-admin";
-import { uploadFile, getFileUrl, deleteMessage } from "./telegram-server";
+import { uploadFileClient, deleteMessageClient } from "./telegram-client";
 import type { DriveFile } from "../types";
 
 const FILES_COLLECTION = "files";
@@ -29,7 +29,7 @@ export async function getDownloadUrl(fileId: string) {
 }
 
 export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileName: string, mimeType: string, folderId?: string) {
-  const result = await uploadFile(fileBuffer, fileName);
+  const result = await uploadFileClient(fileBuffer, fileName);
   const fileId = crypto.randomUUID();
   const now = new Date();
 
@@ -58,20 +58,6 @@ export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileNam
   };
 
   await db.collection(FILES_COLLECTION).doc(fileId).set(fileData);
-
-  if (result.chunks) {
-    for (const chunk of result.chunks) {
-      await db.collection(CHUNKS_COLLECTION).doc(`${fileId}_chunk_${chunk.index}`).set({
-        fileId,
-        index: chunk.index,
-        telegramFileId: chunk.fileId,
-        telegramFilePath: chunk.filePath,
-        telegramMessageId: chunk.messageId,
-        telegramChatId: chunk.chatId,
-        size: chunk.size,
-      });
-    }
-  }
 
   return { id: fileId, ...fileData };
 }
