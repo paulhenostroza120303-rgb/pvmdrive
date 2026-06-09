@@ -1,5 +1,9 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
+import fs from "fs";
+import path from "path";
+import os from "os";
+import crypto from "crypto";
 
 const API_ID = Number(process.env.TELEGRAM_API_ID || 0);
 const API_HASH = process.env.TELEGRAM_API_HASH || "";
@@ -42,34 +46,34 @@ export async function getTelegramClient() {
   return client;
 }
 
-class CustomFile {
-  constructor(
-    public name: string,
-    public size: number,
-    public path: string | undefined,
-    public buffer: Buffer | undefined
-  ) {}
-}
-
 export async function uploadFileClient(buffer: Buffer, fileName: string): Promise<{
   messageId: number;
   chatId: string;
 }> {
   const tgClient = await getTelegramClient();
 
-  const customFile = new CustomFile(fileName, buffer.length, undefined, buffer);
+  // GramJS necesita un path de archivo, no un objeto CustomFile
+  // Escribimos el buffer a un archivo temporal y pasamos la ruta
+  const tempDir = path.join(os.tmpdir(), "pvm-uploads");
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+  const tempPath = path.join(tempDir, `${crypto.randomUUID()}_${fileName}`);
+  fs.writeFileSync(tempPath, buffer);
 
-  const message = await (tgClient as TelegramClient & {
-    sendFile: (entity: string, options: { file: CustomFile; caption: string }) => Promise<{ id: number }>;
-  }).sendFile(TARGET_CHANNEL, {
-    file: customFile,
-    caption: "",
-  });
+  try {
+    const messages = await tgClient.sendFile(TARGET_CHANNEL, {
+      file: tempPath,
+      caption: "",
+    });
 
-  return {
-    messageId: message.id,
-    chatId: TARGET_CHANNEL,
-  };
+    const msg = Array.isArray(messages) ? messages[0] : messages;
+
+    return {
+      messageId: msg.id as number,
+      chatId: TARGET_CHANNEL,
+    };
+  } finally {
+    try { fs.unlinkSync(tempPath); } catch { /* ignorar error de limpieza */ }
+  }
 }
 
 export async function downloadFileClient(messageId: number, chatId: string): Promise<Buffer> {
