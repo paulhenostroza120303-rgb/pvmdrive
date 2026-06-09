@@ -75,6 +75,12 @@ export default function DashboardPage() {
   const [infoData, setInfoData] = useState<Record<string, unknown> | null>(null);
   const [sortBy, setSortBy] = useState<"name" | "size" | "date">("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [listView, setListView] = useState(false);
+  const [previewModal, setPreviewModal] = useState<{ id: string; name: string; mimeType: string; url: string } | null>(null);
+  const [trashView, setTrashView] = useState(false);
+  const [trashItems, setTrashItems] = useState<Array<{ id: string; type: "file" | "folder"; name: string; size?: number; deletedAt?: any }>>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -126,10 +132,26 @@ export default function DashboardPage() {
     });
   };
 
+  // Función de búsqueda local
+  const filterBySearch = (items: any[]): any[] => {
+    if (!searchQuery.trim()) return items;
+    const query = searchQuery.toLowerCase();
+    return items.filter(item => 
+      item.name.toLowerCase().includes(query)
+    );
+  };
+
   const fetchContents = async () => {
     setLoading(true);
     try {
       const token = await getToken();
+      
+      // Si estamos en vista de papelera
+      if (trashView) {
+        await fetchTrash(token);
+        return;
+      }
+      
       const sharedRoot = viewMode === "shared" && !currentFolderId;
       const url = sharedRoot
         ? `/api/files?shared=true`
@@ -138,17 +160,37 @@ export default function DashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error cargando archivos");
       
-      // Aplicar ordenamiento
+      // Aplicar ordenamiento y búsqueda
       const sortedFiles = sortItems(data.files || []);
       const sortedFolders = sortItems(data.folders || []);
       
-      setFiles(sortedFiles);
-      setFolders(sortedFolders);
+      const filteredFiles = filterBySearch(sortedFiles);
+      const filteredFolders = filterBySearch(sortedFolders);
+      
+      setFiles(filteredFiles);
+      setFolders(filteredFolders);
       setIsSharedView(Boolean(data.isSharedView || sharedRoot));
     } catch (err: unknown) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Función para cargar papelera
+  const fetchTrash = async (token: string) => {
+    setTrashLoading(true);
+    try {
+      const res = await fetch('/api/trash', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error cargando papelera");
+      setTrashItems(data.items || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setTrashLoading(false);
     }
   };
 
@@ -306,6 +348,50 @@ export default function DashboardPage() {
     fetchContents();
   };
 
+  // Restaurar desde papelera
+  const restoreItem = async (id: string, type: "file" | "folder") => {
+    const token = await getToken();
+    try {
+      await fetch(`/api/trash/${id}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      fetchContents(); // Recargar papelera
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Eliminar permanentemente
+  const permanentDelete = async (id: string, type: "file" | "folder") => {
+    if (!confirm(`¿Eliminar permanentemente? Esta acción no se puede deshacer.`)) return;
+    const token = await getToken();
+    try {
+      await fetch(`/api/trash/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      fetchContents(); // Recargar papelera
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Vaciar papelera completa
+  const emptyTrash = async () => {
+    if (!confirm(`¿Vaciar toda la papelera? Esta acción no se puede deshacer.`)) return;
+    const token = await getToken();
+    try {
+      await fetch('/api/trash', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      fetchContents();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const renameItem = async (id: string, type: "file" | "folder", currentName: string) => {
     const newName = prompt("Nuevo nombre:", currentName);
     if (!newName) return;
@@ -397,6 +483,35 @@ export default function DashboardPage() {
       }
     }
     fetchContents();
+  };
+
+  // Preview de archivos
+  const previewFile = async (id: string, name: string, mimeType: string) => {
+    const token = await getToken();
+    const uploadUrl = process.env.NEXT_PUBLIC_UPLOAD_URL || "https://pvmdrive-production.up.railway.app";
+    
+    // Obtener URL de descarga
+    const res = await fetch(`${uploadUrl}/download/${id}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    
+    if (!res.ok) {
+      alert('Error al cargar preview');
+      return;
+    }
+    
+    // Crear blob URL para preview
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    setPreviewModal({ id, name, mimeType, url });
+  };
+
+  // Cerrar preview y liberar memoria
+  const closePreview = () => {
+    if (previewModal?.url) {
+      URL.revokeObjectURL(previewModal.url);
+    }
+    setPreviewModal(null);
   };
 
   const downloadFile = async (id: string, fallbackName: string, fileSize?: number) => {
@@ -828,6 +943,12 @@ export default function DashboardPage() {
           >
             <Users className="h-4 w-4" /> Compartido conmigo
           </button>
+          <button
+            onClick={() => { setTrashView(!trashView); setCurrentFolderId(null); }}
+            className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${trashView ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+          >
+            <Trash2 className="h-4 w-4" /> Papelera
+          </button>
         </nav>
         {viewMode === "drive" && !isSharedView && (
           <div className="p-4 border-t space-y-2">
@@ -871,6 +992,49 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {/* Barra de búsqueda */}
+              {!trashView && (
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Buscar archivos..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9 pr-4 py-2 border rounded-lg text-sm w-48 sm:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <svg className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-2 top-2 p-0.5 hover:bg-gray-200 rounded"
+                    >
+                      <X className="h-3 w-3 text-gray-400" />
+                    </button>
+                  )}
+                </div>
+              )}
+              
+              {/* Toggle vista lista/grid */}
+              {!trashView && (
+                <button
+                  onClick={() => setListView(!listView)}
+                  className="bg-gray-100 text-gray-700 p-2 rounded-lg hover:bg-gray-200 transition"
+                  title={listView ? "Vista de cuadrícula" : "Vista de lista"}
+                >
+                  {listView ? (
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                    </svg>
+                  ) : (
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                  )}
+                </button>
+              )}
+              
               {/* Control de ordenamiento */}
               <div className="relative group">
                 <button className="bg-gray-100 text-gray-700 px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-200 transition text-sm font-medium">
