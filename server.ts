@@ -5,8 +5,17 @@ import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile } from './src/lib/storage-server';
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: '*', 
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
+
+// Endpoint de salud para probar conexión
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Upload server is alive!' });
+});
 
 // Configuración de Multer para manejar archivos en memoria
 const upload = multer({ storage: multer.memoryStorage() });
