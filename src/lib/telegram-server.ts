@@ -87,15 +87,40 @@ function assertTelegramConfig() {
 export async function uploadFileChunked(buffer: Buffer, fileName: string): Promise<UploadResult> {
   assertTelegramConfig();
 
-  const chunks: TelegramChunk[] = [];
   const totalChunks = Math.ceil(buffer.length / MAX_CHUNK_SIZE);
-  for (let i = 0; i < totalChunks; i++) {
-    const start = i * MAX_CHUNK_SIZE;
-    const end = Math.min(start + MAX_CHUNK_SIZE, buffer.length);
-    const chunkName = `${crypto.randomUUID()}.bin`;
-    const chunk = await sendFileChunk(buffer.subarray(start, end), chunkName, i);
-    chunks.push(chunk);
+  const concurrencyLimit = 3; // Máximo 3 subidas simultáneas para evitar rate limiting
+  const chunks: TelegramChunk[] = new Array(totalChunks);
+
+  console.log(`[Upload] Starting parallel upload: ${totalChunks} chunks`);
+
+  // Subir chunks en paralelo con límite de concurrencia
+  for (let i = 0; i < totalChunks; i += concurrencyLimit) {
+    const batchEnd = Math.min(i + concurrencyLimit, totalChunks);
+    const batchPromises = [];
+
+    // Crear batch de promesas
+    for (let j = i; j < batchEnd; j++) {
+      const start = j * MAX_CHUNK_SIZE;
+      const end = Math.min(start + MAX_CHUNK_SIZE, buffer.length);
+      const chunkName = `${crypto.randomUUID()}.bin`;
+      
+      // Agregar reintentos para cada chunk
+      batchPromises.push(
+        uploadWithRetry(buffer.subarray(start, end), chunkName, j, 3)
+      );
+    }
+
+    // Esperar a que termine el batch
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Guardar resultados en orden
+    for (let j = 0; j < batchResults.length; j++) {
+      chunks[i + j] = batchResults[j];
+    }
+
+    console.log(`[Upload] Progress: ${batchEnd}/${totalChunks} chunks uploaded`);
   }
+
   return {
     fileId: chunks[0].fileId,
     filePath: chunks[0].filePath,
@@ -103,6 +128,34 @@ export async function uploadFileChunked(buffer: Buffer, fileName: string): Promi
     chatId: chunks[0].chatId,
     chunks,
   };
+}
+
+// Función auxiliar con reintentos
+async function uploadWithRetry(
+  chunkBuffer: Buffer,
+  chunkName: string,
+  index: number,
+  maxRetries: number = 3
+): Promise<TelegramChunk> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const chunk = await sendFileChunk(chunkBuffer, chunkName, index);
+      return chunk;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.warn(`[Upload] Chunk ${index} attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+      
+      if (attempt < maxRetries) {
+        // Esperar antes de reintentar (exponential backoff)
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError || new Error(`Failed to upload chunk ${index} after ${maxRetries} attempts`);
 }
 
 export async function uploadFile(buffer: Buffer, fileName: string): Promise<UploadResult> {

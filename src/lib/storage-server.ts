@@ -97,21 +97,38 @@ export async function buildFileDownloadResponse(fileId: string) {
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for (const chunk of chunks) {
-            const path = await resolveStoredFilePath(
-              (chunk.telegramFilePath || chunk.filePath) as string | undefined,
-              (chunk.telegramFileId || chunk.fileId) as string | undefined
-            );
-            if (!path) throw new Error("Chunk path resolution failed");
-            const res = await fetch(telegramFileUrl(path));
-            if (!res.ok || !res.body) throw new Error("Chunk download failed");
-            const reader = res.body.getReader();
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              controller.enqueue(value);
+          const concurrencyLimit = 5; // Descargar 5 chunks simultáneamente
+          const chunkBuffers: Buffer[] = new Array(chunks.length);
+
+          // Descargar chunks en paralelo con límite de concurrencia
+          for (let i = 0; i < chunks.length; i += concurrencyLimit) {
+            const batchEnd = Math.min(i + concurrencyLimit, chunks.length);
+            const batchPromises = [];
+
+            // Crear batch de promesas de descarga
+            for (let j = i; j < batchEnd; j++) {
+              const chunk = chunks[j];
+              batchPromises.push(
+                downloadChunkWithRetry(chunk, j)
+              );
             }
+
+            // Esperar a que termine el batch
+            const batchResults = await Promise.all(batchPromises);
+            
+            // Guardar buffers en orden
+            for (let j = 0; j < batchResults.length; j++) {
+              chunkBuffers[i + j] = batchResults[j];
+            }
+
+            console.log(`[Download] Progress: ${batchEnd}/${chunks.length} chunks downloaded`);
           }
+
+          // Enviar todos los buffers al stream en orden
+          for (const buffer of chunkBuffers) {
+            controller.enqueue(new Uint8Array(buffer));
+          }
+          
           controller.close();
         } catch (error) {
           controller.error(error);
@@ -121,6 +138,45 @@ export async function buildFileDownloadResponse(fileId: string) {
 
     return { stream, mimeType, fileName };
   }
+
+// Función auxiliar para descargar chunk con reintentos
+async function downloadChunkWithRetry(chunk: any, index: number, maxRetries: number = 3): Promise<Buffer> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const path = await resolveStoredFilePath(
+        (chunk.telegramFilePath || chunk.filePath) as string | undefined,
+        (chunk.telegramFileId || chunk.fileId) as string | undefined
+      );
+      if (!path) throw new Error("Chunk path resolution failed");
+
+      const res = await fetch(telegramFileUrl(path));
+      if (!res.ok || !res.body) throw new Error(`Chunk download failed: ${res.statusText}`);
+
+      // Leer todo el chunk
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      return Buffer.concat(chunks.map(c => new Uint8Array(c)));
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.warn(`[Download] Chunk ${index} attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+      
+      if (attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError || new Error(`Failed to download chunk ${index} after ${maxRetries} attempts`);
+}
 
   const filePath = await resolveStoredFilePath(file.telegramFilePath, file.telegramFileId);
   if (!filePath) return null;
