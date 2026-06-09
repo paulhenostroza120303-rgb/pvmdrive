@@ -198,19 +198,18 @@ export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileNam
   let telegramChatId = "";
   let chunks: Awaited<ReturnType<typeof uploadFileChunked>>["chunks"] = null;
 
+  // Siempre usar chunks paralelos para archivos >20MB para mayor velocidad
   if (fileBuffer.length <= BOT_API_MAX_BYTES) {
+    console.log(`[Upload] File ${(fileBuffer.length / 1024 / 1024).toFixed(1)} MB: Using Bot API (single upload)`);
     const result = await uploadFile(fileBuffer, fileName);
     storageMethod = "bot";
     telegramFileId = result.fileId;
     telegramFilePath = result.filePath;
     telegramMessageId = result.messageId;
     telegramChatId = result.chatId;
-  } else if (hasGramJsConfig()) {
-    const result = await uploadFileClient(fileBuffer, fileName);
-    storageMethod = "gramjs";
-    telegramMessageId = result.messageId;
-    telegramChatId = result.chatId;
   } else {
+    // Para archivos >20MB, siempre usar chunks paralelos (más rápido)
+    console.log(`[Upload] File ${(fileBuffer.length / 1024 / 1024).toFixed(1)} MB: Using parallel chunks`);
     const result = await uploadFileChunked(fileBuffer, fileName);
     storageMethod = "chunked";
     telegramFileId = result.fileId;
