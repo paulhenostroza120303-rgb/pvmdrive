@@ -487,23 +487,28 @@ export default function DashboardPage() {
 
   // Preview de archivos
   const previewFile = async (id: string, name: string, mimeType: string) => {
-    const token = await getToken();
-    const uploadUrl = process.env.NEXT_PUBLIC_UPLOAD_URL || "https://pvmdrive-production.up.railway.app";
-    
-    // Obtener URL de descarga
-    const res = await fetch(`${uploadUrl}/download/${id}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    
-    if (!res.ok) {
-      alert('Error al cargar preview');
-      return;
+    try {
+      const token = await getToken();
+      
+      // Usar la API de Next.js como proxy para evitar problemas de CORS
+      const res = await fetch(`/api/files/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (!res.ok) {
+        console.error('Error al cargar preview:', res.status, res.statusText);
+        alert('Error al cargar vista previa');
+        return;
+      }
+      
+      // Crear blob URL para preview
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setPreviewModal({ id, name, mimeType, url });
+    } catch (error) {
+      console.error('Error en previewFile:', error);
+      alert('Error al cargar la vista previa. Intente descargar el archivo.');
     }
-    
-    // Crear blob URL para preview
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    setPreviewModal({ id, name, mimeType, url });
   };
 
   // Cerrar preview y liberar memoria
