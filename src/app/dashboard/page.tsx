@@ -8,7 +8,7 @@ import { displayFilename } from "@/lib/filename";
 import {
   Loader2, Upload, File as FileIcon, Folder as FolderIcon, Plus,
   Trash2, Edit2, Download, ChevronRight, MoreVertical, X, Check, AlertCircle,
-  HardDrive, Users, Share2, Home
+  HardDrive, Users, Share2, Home, Menu
 } from "lucide-react";
 
 interface UploadItem {
@@ -48,6 +48,7 @@ export default function DashboardPage() {
   const [existingShares, setExistingShares] = useState<ShareEntry[]>([]);
   const [shareLoading, setShareLoading] = useState(false);
   const [shareError, setShareError] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (!user) router.push("/login");
@@ -321,7 +322,15 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen bg-gray-50" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
-      <aside className="w-64 bg-white border-r flex flex-col">
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
+      <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r flex flex-col transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="p-6 border-b">
           <h2 className="text-xl font-bold text-blue-600">CloudGram</h2>
           <p className="text-xs text-gray-500 mt-1 truncate">{user?.email}</p>
@@ -350,10 +359,17 @@ export default function DashboardPage() {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="bg-white border-b px-6 py-4">
+        <header className="bg-white border-b px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1 text-sm text-gray-500 mb-1 flex-wrap">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <button 
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1 text-sm text-gray-500 mb-1 flex-wrap">
                 {breadcrumbs.map((crumb, i) => (
                   <span key={crumb.id ?? "root"} className="flex items-center gap-1">
                     {i > 0 && <ChevronRight className="h-3 w-3" />}
@@ -372,17 +388,19 @@ export default function DashboardPage() {
               <h1 className="text-xl font-semibold text-gray-900 truncate">
                 {breadcrumbs[breadcrumbs.length - 1]?.name || "Mi unidad"}
               </h1>
+              </div>
+              </div>
             </div>
             {viewMode === "drive" && !isSharedView && (
-              <label className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition cursor-pointer text-sm font-medium shrink-0">
-                <Upload className="h-4 w-4" /> Subir archivos
+              <label className="bg-blue-600 text-white px-3 py-2 sm:px-4 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition cursor-pointer text-sm font-medium shrink-0">
+                <Upload className="h-4 w-4" /> <span className="hidden sm:inline">Subir archivos</span>
                 <input type="file" multiple className="hidden" onChange={handleFileSelect} />
               </label>
             )}
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           {loading ? (
             <div className="flex justify-center p-20"><Loader2 className="animate-spin h-8 w-8 text-blue-600" /></div>
           ) : files.length === 0 && folders.length === 0 ? (
@@ -392,57 +410,99 @@ export default function DashboardPage() {
               <p className="text-sm mt-1">{viewMode === "shared" ? "Nadie ha compartido archivos contigo aún" : "Sube archivos o crea una carpeta"}</p>
             </div>
           ) : (
-            <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-gray-50 border-b text-gray-500 text-xs uppercase tracking-wide">
-                    <th className="px-4 py-3 font-medium">Nombre</th>
-                    <th className="px-4 py-3 font-medium hidden sm:table-cell">Tamaño</th>
-                    <th className="px-4 py-3 font-medium hidden md:table-cell">Compartido por</th>
-                    <th className="px-4 py-3 font-medium text-right">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {folders.map((folder) => (
-                    <tr key={folder.id} className="border-b hover:bg-gray-50 transition group">
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
-                          className="flex items-center gap-3 w-full text-left"
-                        >
-                          <FolderIcon className="h-5 w-5 text-amber-500 shrink-0" />
-                          <span className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</span>
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">—</td>
-                      <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{folder.sharedBy || "—"}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={() => setActiveMenu({ id: folder.id, type: "folder", name: folder.name })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
-                          <MoreVertical className="h-4 w-4 text-gray-500" />
-                        </button>
-                      </td>
+            <>
+              {/* Desktop table view */}
+              <div className="hidden sm:block bg-white rounded-xl border shadow-sm overflow-hidden">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-gray-50 border-b text-gray-500 text-xs uppercase tracking-wide">
+                      <th className="px-4 py-3 font-medium">Nombre</th>
+                      <th className="px-4 py-3 font-medium hidden sm:table-cell">Tamaño</th>
+                      <th className="px-4 py-3 font-medium hidden md:table-cell">Compartido por</th>
+                      <th className="px-4 py-3 font-medium text-right">Acciones</th>
                     </tr>
-                  ))}
-                  {files.map((file) => (
-                    <tr key={file.id} className="border-b hover:bg-gray-50 transition group">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <FileIcon className="h-5 w-5 text-blue-500 shrink-0" />
-                          <span className="font-medium text-gray-900 truncate">{displayFilename(file.name)}</span>
+                  </thead>
+                  <tbody>
+                    {folders.map((folder) => (
+                      <tr key={folder.id} className="border-b hover:bg-gray-50 transition group">
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
+                            className="flex items-center gap-3 w-full text-left"
+                          >
+                            <FolderIcon className="h-5 w-5 text-amber-500 shrink-0" />
+                            <span className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</span>
+                          </button>
+                        </td>
+                        <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">—</td>
+                        <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{folder.sharedBy || "—"}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button onClick={() => setActiveMenu({ id: folder.id, type: "folder", name: folder.name })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
+                            <MoreVertical className="h-4 w-4 text-gray-500" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {files.map((file) => (
+                      <tr key={file.id} className="border-b hover:bg-gray-50 transition group">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <FileIcon className="h-5 w-5 text-blue-500 shrink-0" />
+                            <span className="font-medium text-gray-900 truncate">{displayFilename(file.name)}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-gray-500 text-sm hidden sm:table-cell">{formatSize(file.size)}</td>
+                        <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{file.sharedBy || "—"}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button onClick={() => setActiveMenu({ id: file.id, type: "file", name: file.name })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
+                            <MoreVertical className="h-4 w-4 text-gray-500" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile card view */}
+              <div className="sm:hidden space-y-3">
+                {folders.map((folder) => (
+                  <div key={folder.id} className="bg-white rounded-xl border shadow-sm p-4">
+                    <div className="flex items-center justify-between">
+                      <button
+                        onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
+                        className="flex items-center gap-3 flex-1 text-left"
+                      >
+                        <FolderIcon className="h-8 w-8 text-amber-500 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</p>
+                          <p className="text-xs text-gray-500">Carpeta</p>
                         </div>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-sm hidden sm:table-cell">{formatSize(file.size)}</td>
-                      <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{file.sharedBy || "—"}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={() => setActiveMenu({ id: file.id, type: "file", name: file.name })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
-                          <MoreVertical className="h-4 w-4 text-gray-500" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </button>
+                      <button onClick={() => setActiveMenu({ id: folder.id, type: "folder", name: folder.name })} className="p-2 hover:bg-gray-100 rounded-lg">
+                        <MoreVertical className="h-5 w-5 text-gray-500" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {files.map((file) => (
+                  <div key={file.id} className="bg-white rounded-xl border shadow-sm p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <FileIcon className="h-8 w-8 text-blue-500 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-gray-900 truncate">{displayFilename(file.name)}</p>
+                          <p className="text-xs text-gray-500">{formatSize(file.size)}</p>
+                        </div>
+                      </div>
+                      <button onClick={() => setActiveMenu({ id: file.id, type: "file", name: file.name })} className="p-2 hover:bg-gray-100 rounded-lg shrink-0">
+                        <MoreVertical className="h-5 w-5 text-gray-500" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </main>
@@ -457,7 +517,7 @@ export default function DashboardPage() {
       )}
 
       {showUploadPanel && uploads.length > 0 && (
-        <div className="fixed bottom-6 right-6 w-80 bg-white rounded-xl shadow-2xl border z-50 overflow-hidden">
+        <div className="fixed bottom-4 right-4 left-4 sm:left-auto sm:bottom-6 sm:right-6 sm:w-80 bg-white rounded-xl shadow-2xl border z-50 overflow-hidden">
           <div className="bg-gray-50 px-4 py-3 flex items-center justify-between border-b">
             <span className="font-semibold text-sm">
               {uploads.some((u) => u.status === "uploading") ? "Subiendo..." : "Completado"}
@@ -481,63 +541,66 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {activeMenu && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-          <div className="fixed z-50 bg-white shadow-2xl border rounded-xl p-1.5 w-48" style={{ top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}>
-            {activeMenu.type === "folder" ? (
-              <>
-                <button onClick={() => { navigateToFolder(activeMenu.id, activeMenu.name); setActiveMenu(null); }} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                  <FolderIcon className="h-4 w-4" /> Abrir
-                </button>
-                {(!isSharedView || getSharePermission(activeMenu.id, "folder") === "edit") && (
-                  <>
-                    {!isSharedView && (
-                      <button onClick={() => openShareModal(activeMenu.id, "folder", activeMenu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                        <Share2 className="h-4 w-4" /> Compartir
+      {activeMenu && (() => {
+        const menu = activeMenu;
+        return (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
+            <div className="fixed z-50 bg-white shadow-2xl border rounded-xl p-1.5 w-48 max-w-[calc(100vw-2rem)]" style={{ top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}>
+              {menu.type === "folder" ? (
+                <>
+                  <button onClick={() => { navigateToFolder(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                    <FolderIcon className="h-4 w-4" /> Abrir
+                  </button>
+                  {(!isSharedView || getSharePermission(menu.id, "folder") === "edit") && (
+                    <>
+                      {!isSharedView && (
+                        <button onClick={() => openShareModal(menu.id, "folder", menu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                          <Share2 className="h-4 w-4" /> Compartir
+                        </button>
+                      )}
+                      <button onClick={() => renameItem(menu.id, "folder", menu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                        <Edit2 className="h-4 w-4" /> Renombrar
                       </button>
-                    )}
-                    <button onClick={() => renameItem(activeMenu.id, "folder", activeMenu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                      <Edit2 className="h-4 w-4" /> Renombrar
-                    </button>
-                    <hr className="my-1" />
-                    <button onClick={() => deleteItem(activeMenu.id, "folder")} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
-                      <Trash2 className="h-4 w-4" /> Borrar
-                    </button>
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                <button onClick={() => { downloadFile(activeMenu.id, activeMenu.name); setActiveMenu(null); }} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                  <Download className="h-4 w-4" /> Descargar
-                </button>
-                {(!isSharedView || getSharePermission(activeMenu.id, "file") === "edit") && (
-                  <>
-                    {!isSharedView && (
-                      <button onClick={() => openShareModal(activeMenu.id, "file", activeMenu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                        <Share2 className="h-4 w-4" /> Compartir
+                      <hr className="my-1" />
+                      <button onClick={() => deleteItem(menu.id, "folder")} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
+                        <Trash2 className="h-4 w-4" /> Borrar
                       </button>
-                    )}
-                    <button onClick={() => renameItem(activeMenu.id, "file", activeMenu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                      <Edit2 className="h-4 w-4" /> Renombrar
-                    </button>
-                    <hr className="my-1" />
-                    <button onClick={() => deleteItem(activeMenu.id, "file")} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
-                      <Trash2 className="h-4 w-4" /> Borrar
-                    </button>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        </>
-      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button onClick={() => { downloadFile(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                    <Download className="h-4 w-4" /> Descargar
+                  </button>
+                  {(!isSharedView || getSharePermission(menu.id, "file") === "edit") && (
+                    <>
+                      {!isSharedView && (
+                        <button onClick={() => openShareModal(menu.id, "file", menu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                          <Share2 className="h-4 w-4" /> Compartir
+                        </button>
+                      )}
+                      <button onClick={() => renameItem(menu.id, "file", menu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                        <Edit2 className="h-4 w-4" /> Renombrar
+                      </button>
+                      <hr className="my-1" />
+                      <button onClick={() => deleteItem(menu.id, "file")} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
+                        <Trash2 className="h-4 w-4" /> Borrar
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {shareModal && (
         <>
           <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setShareModal(null)} />
-          <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Compartir</h3>
               <button onClick={() => setShareModal(null)} className="p-1 hover:bg-gray-100 rounded"><X className="h-5 w-5" /></button>

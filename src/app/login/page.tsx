@@ -32,10 +32,10 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
-      <div className="p-8 border rounded-lg shadow-md w-96 bg-white">
-        <h1 className="text-2xl font-bold mb-4">Login</h1>
-        {error && <p className="text-red-500 mb-4">{error}</p>}
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+      <div className="p-6 sm:p-8 border rounded-lg shadow-md w-full max-w-md bg-white">
+        <h1 className="text-2xl font-bold mb-4 text-center">Login</h1>
+        {error && <p className="text-red-500 mb-4 text-center text-sm">{error}</p>}
         
         <form onSubmit={handleLogin} className="space-y-4">
           <input
@@ -43,25 +43,25 @@ export default function LoginPage() {
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full p-2 border rounded"
+            className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <input
             type="password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full p-2 border rounded"
+            className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          <button type="submit" className="w-full p-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+          <button type="submit" className="w-full p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium">
             Sign In
           </button>
         </form>
 
-        <div className="my-4 text-center text-gray-500">or</div>
+        <div className="my-4 text-center text-gray-500 text-sm">or</div>
 
         <button 
           onClick={handleGoogleLogin} 
-          className="w-full p-2 border border-gray-300 rounded hover:bg-gray-100 flex items-center justify-center gap-2"
+          className="w-full p-3 border border-gray-300 rounded-lg hover:bg-gray-100 transition flex items-center justify-center gap-2 font-medium"
         >
           Sign in with Google
         </button>
