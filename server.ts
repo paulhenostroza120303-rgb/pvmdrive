@@ -3,6 +3,7 @@ import multer from 'multer';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import { Readable } from 'stream';
 import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile } from './src/lib/storage-server';
 import { getFileUrl } from './src/lib/telegram-server';
@@ -49,7 +50,8 @@ app.get('/download/:fileId', async (req, res) => {
       const url = await getFileUrl(fileData.telegramFileId);
       const response = await fetch(url);
       const reader = response.body;
-      return reader.pipe(res);
+      if (!reader) return res.status(500).send('Error reading file stream');
+      return Readable.fromWeb(reader).pipe(res);
     }
 
     // Archivo fragmentado: Unir fragmentos en un stream
@@ -57,8 +59,10 @@ app.get('/download/:fileId', async (req, res) => {
       const chunkData = chunkDoc.data();
       const chunkUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${chunkData.telegramFilePath}`;
       const response = await fetch(chunkUrl);
+      const reader = response.body;
+      if (!reader) continue;
       
-      for await (const chunk of response.body) {
+      for await (const chunk of reader) {
         res.write(chunk);
       }
     }
