@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import { NextResponse } from "next/server";
 import { uploadUserFile } from "@/lib/storage-server";
 import { auth } from "@/lib/firebase-admin";
@@ -15,14 +17,19 @@ export async function POST(request: Request) {
     
     if (!fileUrl) return NextResponse.json({ error: "No file URL provided" }, { status: 400 });
     
-    // Descargamos el archivo desde ImageKit en el servidor
+    // Descargamos el archivo desde ImageKit temporalmente
     const response = await fetch(fileUrl);
     if (!response.ok) return NextResponse.json({ error: "Failed to fetch file from ImageKit" }, { status: 500 });
     
     const buffer = Buffer.from(await response.arrayBuffer());
+    const tempPath = path.join("/tmp", `${Date.now()}-${fileName}`);
+    fs.writeFileSync(tempPath, buffer);
     
-    // Ahora lo subimos a Telegram
-    const result = await uploadUserFile(userId, buffer, fileName, mimeType, folderId || undefined);
+    // Ahora lo subimos a Telegram usando la ruta del archivo temporal
+    const result = await uploadUserFile(userId, tempPath, fileName, mimeType, size || buffer.length, folderId || undefined);
+    
+    // Limpiar archivo temporal
+    fs.unlinkSync(tempPath);
     
     return NextResponse.json(result);
   } catch (error: any) {
