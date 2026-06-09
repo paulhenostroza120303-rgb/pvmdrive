@@ -14,7 +14,6 @@ export async function getTelegramClient() {
 
   const session = new StringSession(SESSION_STRING);
   client = new TelegramClient(SESSION_STRING, API_ID, API_HASH, {
-    session: session,
     connectionRetries: 5,
   });
 
