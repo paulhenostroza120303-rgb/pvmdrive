@@ -75,7 +75,18 @@ async function sendFileChunk(buffer: Buffer, fileName: string, index: number): P
   };
 }
 
+function assertTelegramConfig() {
+  if (!TELEGRAM_BOT_TOKEN) {
+    throw new Error("TELEGRAM_BOT_TOKEN is not configured");
+  }
+  if (!TELEGRAM_CHANNEL_ID) {
+    throw new Error("TELEGRAM_CHANNEL_ID is not configured");
+  }
+}
+
 export async function uploadFile(buffer: Buffer, fileName: string): Promise<UploadResult> {
+  assertTelegramConfig();
+
   if (shouldChunk(buffer.length)) {
     const chunks: TelegramChunk[] = [];
     const totalChunks = Math.ceil(buffer.length / MAX_CHUNK_SIZE);

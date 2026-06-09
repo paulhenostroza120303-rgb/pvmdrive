@@ -2,83 +2,46 @@ import express from 'express';
 import multer from 'multer';
 import cors from 'cors';
 import fs from 'fs';
+import path from 'path';
 import { auth } from './src/lib/firebase-admin';
-import { uploadUserFile } from './src/lib/storage-server';
+import { uploadUserFile, buildFileDownloadResponse } from './src/lib/storage-server';
+
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 const app = express();
 app.use(cors({
-  origin: '*', 
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
-const upload = multer({ 
-  dest: 'uploads/',
-  limits: { fileSize: 2 * 1024 * 1024 * 1024 } 
+const upload = multer({
+  dest: uploadsDir,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 }
 });
 
-// Endpoint de Salud
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Upload server is alive!' });
 });
 
-// Endpoint de Descarga Unificada (Ensambla los trozos de Telegram)
 app.get('/download/:fileId', async (req, res) => {
   try {
     const { fileId } = req.params;
-    const admin = require('firebase-admin');
-    const db = admin.firestore();
-    
-    const fileDoc = await db.collection('files').doc(fileId).get();
-    if (!fileDoc.exists) return res.status(404).send('File not found');
-    
-    const fileData = fileDoc.data();
-    const chunksSnap = await db.collection('file_chunks')
-      .where('fileId', '==', fileId)
-      .orderBy('index', 'asc')
-      .get();
+    const download = await buildFileDownloadResponse(fileId);
+    if (!download) return res.status(404).send('File not found');
 
-    res.setHeader('Content-Disposition', `attachment; filename="${fileData.name}"`);
-    res.setHeader('Content-Type', fileData.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${download.fileName}"`);
+    res.setHeader('Content-Type', download.mimeType);
 
-    if (chunksSnap.empty) {
-      // Archivo simple (no fragmentado)
-      const botToken = process.env.TELEGRAM_BOT_TOKEN;
-      if (!botToken) return res.status(500).send('Download not available: Bot token not configured');
-      
-      // Obtener la ruta del archivo desde Telegram
-      const fileInfoRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileData.telegramFileId}`);
-      const fileInfo = await fileInfoRes.json();
-      if (!fileInfo.ok) return res.status(500).send('Could not retrieve file from Telegram');
-      
-      const url = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
-      const response = await fetch(url);
-      const reader = response.body?.getReader();
-      if (!reader) return res.status(500).send('Error reading file stream');
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-      }
-      res.end();
-      return;
-    }
-
-    // Archivo fragmentado: Unir fragmentos en un stream
-    for (const chunkDoc of chunksSnap.docs) {
-      const chunkData = chunkDoc.data();
-      const chunkUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${chunkData.telegramFilePath}`;
-      const response = await fetch(chunkUrl);
-      const reader = response.body?.getReader();
-      if (!reader) continue;
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-      }
+    const reader = download.stream.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(value);
     }
     res.end();
   } catch (error) {
@@ -87,32 +50,31 @@ app.get('/download/:fileId', async (req, res) => {
   }
 });
 
-// Endpoint de Subida
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
-    
+
     const token = authHeader.split('Bearer ')[1];
     const decodedToken = await auth.verifyIdToken(token);
     const userId = decodedToken.uid;
-    
+
     const file = req.file;
     const folderId = req.body.folderId || null;
-    
+
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
     const fileBuffer = fs.readFileSync(file.path);
     const result = await uploadUserFile(userId, fileBuffer, file.originalname, file.mimetype, folderId);
-    
+
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     res.json(result);
-    res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
     console.error("Upload Error:", error);
-    res.status(500).json({ error: error.message || 'Internal Server Error' });
+    res.status(500).json({ error: message });
   }
 });
 

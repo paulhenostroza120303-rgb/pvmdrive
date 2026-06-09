@@ -1,10 +1,20 @@
 import { db } from "./firebase-admin";
-import { uploadFileClient } from "./telegram-client";
+import { uploadFile } from "./telegram-server";
 import type { DriveFile } from "../types";
 
 const FILES_COLLECTION = "files";
 const FOLDERS_COLLECTION = "folders";
 const CHUNKS_COLLECTION = "file_chunks";
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const UPLOAD_SERVER_URL =
+  process.env.UPLOAD_SERVER_URL ||
+  process.env.NEXT_PUBLIC_UPLOAD_URL ||
+  "https://pvmdrive-production.up.railway.app";
+
+function telegramFileUrl(filePath: string) {
+  return `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+}
 
 interface StoredFile extends DriveFile {
   telegramFileId: string;
@@ -21,11 +31,69 @@ export async function getDownloadUrl(fileId: string) {
   
   // Ahora todas las descargas pasan por el proxy de Railway para asegurar compatibilidad
   // y soporte para archivos fragmentados o de cuenta personal.
-  return `https://pvmdrive-production.up.railway.app/download/${fileId}`;
+  return `${UPLOAD_SERVER_URL}/download/${fileId}`;
+}
+
+export async function buildFileDownloadResponse(fileId: string) {
+  const file = await getFileDoc(fileId);
+  if (!file) return null;
+
+  const fileName = file.originalName || file.name;
+  const mimeType = file.mimeType || "application/octet-stream";
+
+  const chunksSnap = await db.collection(CHUNKS_COLLECTION).where("fileId", "==", fileId).get();
+
+  if (!chunksSnap.empty) {
+    const chunks = chunksSnap.docs
+      .map((doc) => doc.data())
+      .sort((a, b) => (a.index as number) - (b.index as number));
+
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for (const chunk of chunks) {
+            const path = (chunk.telegramFilePath || chunk.filePath) as string;
+            const res = await fetch(telegramFileUrl(path));
+            if (!res.ok || !res.body) throw new Error("Chunk download failed");
+            const reader = res.body.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+          }
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+    });
+
+    return { stream, mimeType, fileName };
+  }
+
+  let filePath = file.telegramFilePath;
+
+  if (!filePath && file.telegramFileId) {
+    const infoRes = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${file.telegramFileId}`
+    );
+    const info = await infoRes.json();
+    if (info.ok && info.result?.file_path) {
+      filePath = info.result.file_path;
+    }
+  }
+
+  if (!filePath) return null;
+
+  const res = await fetch(telegramFileUrl(filePath));
+  if (!res.ok || !res.body) return null;
+
+  return { stream: res.body, mimeType, fileName };
 }
 
 export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileName: string, mimeType: string, folderId?: string) {
-  const result = await uploadFileClient(fileBuffer, fileName);
+  const result = await uploadFile(fileBuffer, fileName);
   const fileId = crypto.randomUUID();
   const now = new Date();
 
@@ -54,6 +122,23 @@ export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileNam
   };
 
   await db.collection(FILES_COLLECTION).doc(fileId).set(fileData);
+
+  if (result.chunks?.length) {
+    const batch = db.batch();
+    for (const chunk of result.chunks) {
+      const chunkRef = db.collection(CHUNKS_COLLECTION).doc();
+      batch.set(chunkRef, {
+        fileId,
+        index: chunk.index,
+        telegramFileId: chunk.fileId,
+        telegramFilePath: chunk.filePath,
+        telegramMessageId: chunk.messageId,
+        telegramChatId: chunk.chatId,
+        size: chunk.size,
+      });
+    }
+    await batch.commit();
+  }
 
   return { id: fileId, ...fileData };
 }

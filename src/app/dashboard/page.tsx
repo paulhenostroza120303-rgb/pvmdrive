@@ -64,7 +64,8 @@ export default function DashboardPage() {
       formData.append("file", file);
       formData.append("folderId", folderId || "");
 
-      const serverRes = await fetch("https://pvmdrive-production.up.railway.app/upload", {
+      const uploadUrl = process.env.NEXT_PUBLIC_UPLOAD_URL || "https://pvmdrive-production.up.railway.app";
+      const serverRes = await fetch(`${uploadUrl}/upload`, {
         method: "POST",
         headers: { 
             "Authorization": `Bearer ${token}`
