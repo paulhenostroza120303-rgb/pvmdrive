@@ -58,5 +58,5 @@ export async function uploadFileClient(buffer: Buffer, fileName: string): Promis
 
 export async function deleteMessageClient(messageId: number): Promise<void> {
   const client = await getTelegramClient();
-  await client.deleteMessages(TARGET_CHANNEL, [messageId]);
+  await (client as any).deleteMessages(TARGET_CHANNEL, [messageId]);
 }
