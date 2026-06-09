@@ -2,7 +2,8 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || "";
 const API_BASE = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
-const MAX_CHUNK_SIZE = 30 * 1024 * 1024;
+// Telegram Bot API: getFile/download limit is 20 MB per file
+const MAX_CHUNK_SIZE = 18 * 1024 * 1024;
 
 function shouldChunk(size: number): boolean {
   return size > MAX_CHUNK_SIZE;
@@ -25,6 +26,24 @@ export interface UploadResult {
   chunks: TelegramChunk[] | null;
 }
 
+export async function resolveFilePath(fileId: string, maxAttempts = 15): Promise<string | null> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const fileInfoRes = await fetch(`${API_BASE}/getFile?file_id=${fileId}`);
+      const info = await fileInfoRes.json();
+      if (info.ok && info.result?.file_path) {
+        return info.result.file_path;
+      }
+      console.log(`resolveFilePath attempt ${attempt + 1}: file not ready yet`);
+    } catch (e) {
+      console.error(`resolveFilePath attempt ${attempt + 1} error:`, e);
+    }
+    const delayMs = Math.min(2000 * (attempt + 1), 10000);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return null;
+}
+
 async function sendFileChunk(buffer: Buffer, fileName: string, index: number): Promise<TelegramChunk> {
   const formData = new FormData();
   const blob = new Blob([new Uint8Array(buffer)]);
@@ -34,41 +53,25 @@ async function sendFileChunk(buffer: Buffer, fileName: string, index: number): P
   const res = await fetch(`${API_BASE}/sendDocument`, { method: "POST", body: formData });
   if (!res.ok) throw new Error(`Telegram upload failed: ${res.statusText}`);
   const data = await res.json();
-  
+
   if (!data.ok) {
     throw new Error(`Telegram API Error: ${data.description}`);
   }
 
   const doc = data.result.document || data.result.audio || data.result.video;
-  
-    // Intentar obtener el file_path con un sistema de reintentos más robusto
-    let fileInfoData;
-    let attempts = 0;
-    const maxAttempts = 10; // Aumentado a 10 reintentos
-    while (attempts < maxAttempts) {
-      try {
-        const fileInfoRes = await fetch(`${API_BASE}/getFile?file_id=${doc.file_id}`);
-        const info = await fileInfoRes.json();
-        if (info.ok && info.result) {
-          fileInfoData = info;
-          break;
-        }
-        console.log(`Attempt ${attempts + 1}: Telegram file not ready yet...`);
-      } catch (e) {
-        console.error(`Attempt ${attempts + 1} Error:`, e);
-      }
-      attempts++;
-      await new Promise(resolve => setTimeout(resolve, 3000)); // Esperar 3 segundos entre reintentos
-    }
+  if (!doc?.file_id) {
+    throw new Error("Telegram did not return a file id for the uploaded chunk");
+  }
 
-  if (!fileInfoData || !fileInfoData.result) {
-    throw new Error("Could not retrieve file path from Telegram after multiple attempts");
+  const filePath = await resolveFilePath(doc.file_id);
+  if (!filePath) {
+    console.warn(`Chunk ${index}: file_path unavailable after retries, storing file_id for download resolution`);
   }
 
   return {
     index,
     fileId: doc.file_id,
-    filePath: fileInfoData.result.file_path,
+    filePath: filePath || "",
     messageId: data.result.message_id,
     chatId: TELEGRAM_CHANNEL_ID,
     size: doc.file_size || buffer.length,

@@ -1,5 +1,5 @@
 import { db } from "./firebase-admin";
-import { uploadFile } from "./telegram-server";
+import { uploadFile, resolveFilePath } from "./telegram-server";
 import type { DriveFile } from "../types";
 
 const FILES_COLLECTION = "files";
@@ -14,6 +14,12 @@ const UPLOAD_SERVER_URL =
 
 function telegramFileUrl(filePath: string) {
   return `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+}
+
+async function resolveStoredFilePath(storedPath: string | undefined, fileId: string | undefined): Promise<string | null> {
+  if (storedPath) return storedPath;
+  if (!fileId) return null;
+  return resolveFilePath(fileId);
 }
 
 interface StoredFile extends DriveFile {
@@ -52,7 +58,11 @@ export async function buildFileDownloadResponse(fileId: string) {
       async start(controller) {
         try {
           for (const chunk of chunks) {
-            const path = (chunk.telegramFilePath || chunk.filePath) as string;
+            const path = await resolveStoredFilePath(
+              (chunk.telegramFilePath || chunk.filePath) as string | undefined,
+              (chunk.telegramFileId || chunk.fileId) as string | undefined
+            );
+            if (!path) throw new Error("Chunk path resolution failed");
             const res = await fetch(telegramFileUrl(path));
             if (!res.ok || !res.body) throw new Error("Chunk download failed");
             const reader = res.body.getReader();
@@ -72,18 +82,7 @@ export async function buildFileDownloadResponse(fileId: string) {
     return { stream, mimeType, fileName };
   }
 
-  let filePath = file.telegramFilePath;
-
-  if (!filePath && file.telegramFileId) {
-    const infoRes = await fetch(
-      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${file.telegramFileId}`
-    );
-    const info = await infoRes.json();
-    if (info.ok && info.result?.file_path) {
-      filePath = info.result.file_path;
-    }
-  }
-
+  const filePath = await resolveStoredFilePath(file.telegramFilePath, file.telegramFileId);
   if (!filePath) return null;
 
   const res = await fetch(telegramFileUrl(filePath));
