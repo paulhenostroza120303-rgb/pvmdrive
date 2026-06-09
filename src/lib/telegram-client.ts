@@ -96,6 +96,34 @@ export async function downloadFileClient(messageId: number, chatId: string): Pro
   throw new Error("Unexpected download format from Telegram");
 }
 
+/**
+ * Descarga un archivo de Telegram a un archivo temporal en disco.
+ * Mejor para archivos grandes porque no llena la RAM.
+ * Retorna la ruta del archivo temporal (el llamador debe borrarlo después).
+ */
+export async function downloadFileToDisk(messageId: number, chatId: string, fileName: string): Promise<string> {
+  const tgClient = await getTelegramClient();
+  const messages = await tgClient.getMessages(chatId, { ids: [messageId] });
+
+  if (!messages?.length || !messages[0]) {
+    throw new Error("Telegram message not found for download");
+  }
+
+  const tempDir = path.join(os.tmpdir(), "pvm-downloads");
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+  const tempPath = path.join(tempDir, `${crypto.randomUUID()}_${fileName}`);
+
+  await tgClient.downloadMedia(messages[0], {
+    outputFile: tempPath,
+  });
+
+  if (!fs.existsSync(tempPath)) {
+    throw new Error("Failed to download file to disk");
+  }
+
+  return tempPath;
+}
+
 export async function deleteMessageClient(messageId: number): Promise<void> {
   const tgClient = await getTelegramClient();
   await tgClient.deleteMessages(TARGET_CHANNEL, [messageId], { revoke: true });

@@ -1,6 +1,7 @@
 import { db } from "./firebase-admin";
+import fs from "fs";
 import { uploadFile, uploadFileChunked, resolveFilePath, BOT_API_MAX_BYTES } from "./telegram-server";
-import { uploadFileClient, downloadFileClient, hasGramJsConfig } from "./telegram-client";
+import { uploadFileClient, downloadFileClient, downloadFileToDisk, hasGramJsConfig } from "./telegram-client";
 import { canAccessFolder, getFolderDoc } from "./sharing";
 import { displayFilename } from "./filename";
 import type { DriveFile } from "../types";
@@ -63,8 +64,27 @@ export async function buildFileDownloadResponse(fileId: string) {
   const mimeType = file.mimeType || "application/octet-stream";
 
   if (file.storageMethod === "gramjs" || (!file.storageMethod && !file.telegramFilePath && file.telegramMessageId)) {
-    const buffer = await downloadFileClient(file.telegramMessageId, file.telegramChatId);
-    return { stream: bufferToStream(buffer), mimeType, fileName };
+    // Para archivos GramJS grandes, descargar a disco y hacer streaming desde ahí
+    const tempPath = await downloadFileToDisk(file.telegramMessageId, file.telegramChatId, fileName);
+    const fileStream = fs.createReadStream(tempPath);
+    // Auto-limpiar el archivo temporal cuando termine el stream
+    fileStream.on("close", () => {
+      try { fs.unlinkSync(tempPath); } catch { /* ignorar */ }
+    });
+    fileStream.on("error", () => {
+      try { fs.unlinkSync(tempPath); } catch { /* ignorar */ }
+    });
+    // Convertir Node.js Readable a Web ReadableStream
+    const stream = new ReadableStream({
+      start(controller) {
+        fileStream.on("data", (chunk: string | Buffer) => {
+          controller.enqueue(new Uint8Array(chunk as Uint8Array));
+        });
+        fileStream.on("end", () => controller.close());
+        fileStream.on("error", (err: Error) => controller.error(err));
+      },
+    });
+    return { stream, mimeType, fileName };
   }
 
   const chunksSnap = await db.collection(CHUNKS_COLLECTION).where("fileId", "==", fileId).get();

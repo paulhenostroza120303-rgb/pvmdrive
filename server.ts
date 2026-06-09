@@ -4,7 +4,7 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { auth } from './src/lib/firebase-admin';
-import { uploadUserFile, buildFileDownloadResponse } from './src/lib/storage-server';
+import { uploadUserFile, buildFileDownloadResponse, getFileDoc } from './src/lib/storage-server';
 import { decodeUploadFilename, contentDispositionHeader } from './src/lib/filename';
 import { canAccessFile } from './src/lib/sharing';
 
@@ -50,11 +50,17 @@ app.get('/download/:fileId', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
+    // Obtener metadata del archivo para Content-Length
+    const fileDoc = await getFileDoc(fileId);
+    if (!fileDoc) return res.status(404).send('File not found');
+
     const download = await buildFileDownloadResponse(fileId);
     if (!download) return res.status(404).send('File not found');
 
     res.setHeader('Content-Disposition', contentDispositionHeader(download.fileName));
     res.setHeader('Content-Type', download.mimeType);
+    // Content-Length para que el navegador muestre progreso de descarga
+    if (fileDoc.size) res.setHeader('Content-Length', fileDoc.size);
 
     const reader = download.stream.getReader();
     while (true) {
@@ -65,7 +71,11 @@ app.get('/download/:fileId', async (req, res) => {
     res.end();
   } catch (error) {
     console.error('Download Error:', error);
-    res.status(500).send('Internal Server Error');
+    if (!res.headersSent) {
+      res.status(500).send('Internal Server Error');
+    } else {
+      res.end();
+    }
   }
 });
 
