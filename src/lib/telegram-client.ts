@@ -39,8 +39,7 @@ export async function uploadFileClient(buffer: Buffer, fileName: string): Promis
   const client = await getTelegramClient();
   
   // Subir el archivo como un único documento (Hasta 2GB)
-  const result = await client.sendFile(TARGET_CHANNEL, {
-    buffer: buffer,
+  const result = await client.sendFile(TARGET_CHANNEL, buffer, {
     fileName: fileName,
   } as any);
 
