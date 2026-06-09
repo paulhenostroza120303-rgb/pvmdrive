@@ -36,7 +36,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
     const id = (await params).id;
     const body = await request.json();
-    const { name, type, starred } = body;
+    const { name, type, starred, folderId } = body;
 
     if (type === "file") {
       const allowed = await canAccessFile(user.uid, user.email, id, "edit");
@@ -53,7 +53,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if (type === "file") updateData.originalName = name;
     }
     if (starred !== undefined) updateData.starred = starred;
-    if (name !== undefined || starred !== undefined) updateData.updatedAt = new Date();
+    if (folderId !== undefined) {
+      // Mover archivo/carpeta a otra carpeta
+      updateData[type === "folder" ? "parentId" : "folderId"] = folderId || null;
+    }
+    if (Object.keys(updateData).length > 0) updateData.updatedAt = new Date();
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });

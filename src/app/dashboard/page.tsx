@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useRouter } from "next/navigation";
 import { DriveFile, Folder, BreadcrumbItem, ViewMode } from "@/types";
@@ -8,7 +8,8 @@ import { displayFilename } from "@/lib/filename";
 import {
   Loader2, Upload, File as FileIcon, Folder as FolderIcon, Plus,
   Trash2, Edit2, Download, ChevronRight, MoreVertical, X, Check, AlertCircle,
-  HardDrive, Users, Share2, Home, Menu
+  HardDrive, Users, Share2, Home, Menu, Star, Copy, Scissors, ClipboardPaste,
+  Move, Info, FolderInput, StarOff
 } from "lucide-react";
 
 interface UploadItem {
@@ -24,6 +25,14 @@ interface ShareEntry {
   id: string;
   sharedWithEmail: string;
   permission: string;
+}
+
+interface ClipboardItem {
+  id: string;
+  type: "file" | "folder";
+  name: string;
+  action: "copy" | "cut";
+  sourceFolderId: string | null;
 }
 
 export default function DashboardPage() {
@@ -47,11 +56,24 @@ export default function DashboardPage() {
   const [shareLoading, setShareLoading] = useState(false);
   const [shareError, setShareError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [clipboard, setClipboard] = useState<ClipboardItem | null>(null);
+  const [infoModal, setInfoModal] = useState<{ id: string; type: "file" | "folder"; name: string } | null>(null);
+  const [infoData, setInfoData] = useState<Record<string, unknown> | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!user) router.push("/login");
     else fetchContents();
   }, [user, currentFolderId, viewMode]);
+
+  // Cerrar menú al presionar Escape
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActiveMenu(null);
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, []);
 
   const getToken = async () => {
     const token = await user?.getIdToken();
@@ -247,6 +269,86 @@ export default function DashboardPage() {
     fetchContents();
   };
 
+  const toggleStar = async (id: string, type: "file" | "folder", currentStarred: boolean) => {
+    const token = await getToken();
+    await fetch(`/api/items/${id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ starred: !currentStarred, type }),
+    });
+    setActiveMenu(null);
+    fetchContents();
+  };
+
+  const moveItem = async (id: string, type: "file" | "folder", targetFolderId: string | null) => {
+    const token = await getToken();
+    await fetch(`/api/items/${id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId: targetFolderId, type }),
+    });
+    setActiveMenu(null);
+    fetchContents();
+  };
+
+  const copyItem = (id: string, type: "file" | "folder", name: string) => {
+    setClipboard({ id, type, name, action: "copy", sourceFolderId: currentFolderId });
+    setActiveMenu(null);
+  };
+
+  const cutItem = (id: string, type: "file" | "folder", name: string) => {
+    setClipboard({ id, type, name, action: "cut", sourceFolderId: currentFolderId });
+    setActiveMenu(null);
+  };
+
+  const pasteItem = async () => {
+    if (!clipboard) return;
+    const token = await getToken();
+    if (clipboard.action === "cut") {
+      // Mover: cambiar folderId/parentId
+      await fetch(`/api/items/${clipboard.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId: currentFolderId, type: clipboard.type }),
+      });
+      setClipboard(null);
+    } else {
+      // Copiar: para archivos, necesitamos re-descargar y re-subir
+      // Para carpetas, crear nueva carpeta con mismo nombre
+      if (clipboard.type === "folder") {
+        await fetch("/api/folders", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ name: `${clipboard.name} (copia)`, parentId: currentFolderId }),
+        });
+      } else {
+        // Descargar y re-subir el archivo
+        try {
+          const downloadRes = await fetch(`/api/items/${clipboard.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (downloadRes.ok) {
+            const blob = await downloadRes.blob();
+            const formData = new FormData();
+            const copyName = clipboard.name.replace(/(\.[^.]+)$/, " (copia)$1");
+            formData.append("file", blob, copyName);
+            formData.append("fileName", copyName);
+            formData.append("folderId", currentFolderId || "");
+            const uploadUrl = process.env.NEXT_PUBLIC_UPLOAD_URL || "https://pvmdrive-production.up.railway.app";
+            await fetch(`${uploadUrl}/upload`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` },
+              body: formData,
+            });
+          }
+        } catch (err) {
+          console.error("Error al copiar archivo:", err);
+        }
+      }
+    }
+    fetchContents();
+  };
+
   const downloadFile = async (id: string, fallbackName: string) => {
     const token = await getToken();
     const res = await fetch(`/api/items/${id}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -329,6 +431,19 @@ export default function DashboardPage() {
     if (shareModal) openShareModal(shareModal.id, shareModal.type, shareModal.name);
   };
 
+  const openInfoModal = async (id: string, type: "file" | "folder", name: string) => {
+    setInfoModal({ id, type, name });
+    setActiveMenu(null);
+    try {
+      const token = await getToken();
+      const list = type === "file" ? files : folders;
+      const item = list.find((i) => i.id === id);
+      if (item) setInfoData(item as unknown as Record<string, unknown>);
+    } catch {
+      setInfoData(null);
+    }
+  };
+
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -336,9 +451,132 @@ export default function DashboardPage() {
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
   };
 
+  const formatDate = (d: Date | unknown) => {
+    if (!d) return "—";
+    try {
+      const date = d instanceof Date ? d : new Date(d as string | number);
+      return date.toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return "—";
+    }
+  };
+
   const getSharePermission = (id: string, type: "file" | "folder") => {
     const list = type === "file" ? files : folders;
     return list.find((item) => item.id === id)?.sharePermission;
+  };
+
+  const getItemStarred = (id: string, type: "file" | "folder") => {
+    const list = type === "file" ? files : folders;
+    return list.find((item) => item.id === id)?.starred || false;
+  };
+
+  // Calcular posición del menú para que no salga de pantalla
+  const getMenuPosition = useCallback((x: number, y: number) => {
+    const menuWidth = 200;
+    const menuHeight = 400;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    return {
+      x: x + menuWidth > vw ? Math.max(8, x - menuWidth) : x,
+      y: y + menuHeight > vh ? Math.max(8, y - menuHeight) : y,
+    };
+  }, []);
+
+  const handleContextMenu = (e: React.MouseEvent, id: string, type: "file" | "folder", name: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActiveMenu({ id, type, name, x: e.clientX, y: e.clientY });
+  };
+
+  // Menú contextual completo
+  const ContextMenu = ({ menu }: { menu: { id: string; type: "file" | "folder"; name: string; x: number; y: number } }) => {
+    const pos = getMenuPosition(menu.x, menu.y);
+    const isStarred = getItemStarred(menu.id, menu.type);
+    const canEdit = !isSharedView || getSharePermission(menu.id, menu.type) === "edit";
+    const isOwner = !isSharedView;
+
+    return (
+      <>
+        <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} onContextMenu={(e) => { e.preventDefault(); setActiveMenu(null); }} />
+        <div ref={menuRef} className="fixed z-50 bg-white shadow-2xl border rounded-xl p-1.5 w-52 max-w-[calc(100vw-1rem)]" style={{ top: pos.y, left: pos.x }}>
+          {/* Abrir / Descargar */}
+          {menu.type === "folder" ? (
+            <button onClick={() => { navigateToFolder(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+              <FolderIcon className="h-4 w-4 text-amber-500" /> Abrir carpeta
+            </button>
+          ) : (
+            <button onClick={() => { downloadFile(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+              <Download className="h-4 w-4 text-blue-500" /> Descargar
+            </button>
+          )}
+
+          <hr className="my-1" />
+
+          {/* Favorito */}
+          {isOwner && (
+            <button onClick={() => toggleStar(menu.id, menu.type, isStarred)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+              {isStarred ? <StarOff className="h-4 w-4 text-amber-500" /> : <Star className="h-4 w-4 text-amber-500" />}
+              {isStarred ? "Quitar favorito" : "Agregar a favoritos"}
+            </button>
+          )}
+
+          {/* Compartir */}
+          {isOwner && (
+            <button onClick={() => openShareModal(menu.id, menu.type, menu.name)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+              <Share2 className="h-4 w-4 text-green-500" /> Compartir
+            </button>
+          )}
+
+          <hr className="my-1" />
+
+          {/* Renombrar */}
+          {canEdit && (
+            <button onClick={() => renameItem(menu.id, menu.type, menu.name)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+              <Edit2 className="h-4 w-4 text-gray-500" /> Renombrar
+            </button>
+          )}
+
+          {/* Copiar */}
+          {canEdit && (
+            <button onClick={() => copyItem(menu.id, menu.type, menu.name)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+              <Copy className="h-4 w-4 text-gray-500" /> Copiar
+            </button>
+          )}
+
+          {/* Cortar */}
+          {canEdit && (
+            <button onClick={() => cutItem(menu.id, menu.type, menu.name)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+              <Scissors className="h-4 w-4 text-gray-500" /> Cortar
+            </button>
+          )}
+
+          {/* Mover a... */}
+          {canEdit && isOwner && (
+            <button onClick={() => { moveItem(menu.id, menu.type, null); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+              <Move className="h-4 w-4 text-gray-500" /> Mover a raíz
+            </button>
+          )}
+
+          <hr className="my-1" />
+
+          {/* Info */}
+          <button onClick={() => openInfoModal(menu.id, menu.type, menu.name)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+            <Info className="h-4 w-4 text-gray-400" /> Información
+          </button>
+
+          {/* Borrar */}
+          {canEdit && (
+            <>
+              <hr className="my-1" />
+              <button onClick={() => deleteItem(menu.id, menu.type)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
+                <Trash2 className="h-4 w-4" /> Borrar
+              </button>
+            </>
+          )}
+        </div>
+      </>
+    );
   };
 
   return (
@@ -371,7 +609,7 @@ export default function DashboardPage() {
           </button>
         </nav>
         {viewMode === "drive" && !isSharedView && (
-          <div className="p-4 border-t">
+          <div className="p-4 border-t space-y-2">
             <button onClick={createFolder} className="flex items-center gap-2 w-full p-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
               <Plus className="h-4 w-4" /> Nueva carpeta
             </button>
@@ -411,16 +649,36 @@ export default function DashboardPage() {
                 </h1>
               </div>
             </div>
-            {viewMode === "drive" && !isSharedView && (
-              <label className="bg-blue-600 text-white px-3 py-2 sm:px-4 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition cursor-pointer text-sm font-medium shrink-0">
-                <Upload className="h-4 w-4" /> <span className="hidden sm:inline">Subir archivos</span>
-                <input type="file" multiple className="hidden" onChange={handleFileSelect} />
-              </label>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Botón Pegar */}
+              {clipboard && !isSharedView && (
+                <button
+                  onClick={pasteItem}
+                  className="bg-orange-100 text-orange-700 px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-orange-200 transition text-sm font-medium"
+                  title={`Pegar: ${clipboard.name} (${clipboard.action === "cut" ? "Cortar" : "Copiar"})`}
+                >
+                  <ClipboardPaste className="h-4 w-4" /> <span className="hidden sm:inline">Pegar</span>
+                  <button onClick={(e) => { e.stopPropagation(); setClipboard(null); }} className="ml-1 hover:text-orange-900">
+                    <X className="h-3 w-3" />
+                  </button>
+                </button>
+              )}
+              {viewMode === "drive" && !isSharedView && (
+                <label className="bg-blue-600 text-white px-3 py-2 sm:px-4 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition cursor-pointer text-sm font-medium">
+                  <Upload className="h-4 w-4" /> <span className="hidden sm:inline">Subir archivos</span>
+                  <input type="file" multiple className="hidden" onChange={handleFileSelect} />
+                </label>
+              )}
+            </div>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6"
+          onContextMenu={(e) => {
+            // Click derecho en zona vacía = no hacer nada (o mostrar menú de carpeta)
+            e.preventDefault();
+          }}
+        >
           {loading ? (
             <div className="flex justify-center p-20"><Loader2 className="animate-spin h-8 w-8 text-blue-600" /></div>
           ) : files.length === 0 && folders.length === 0 ? (
@@ -444,29 +702,41 @@ export default function DashboardPage() {
                   </thead>
                   <tbody>
                     {folders.map((folder) => (
-                      <tr key={folder.id} className="border-b hover:bg-gray-50 transition group">
+                      <tr
+                        key={folder.id}
+                        className={`border-b hover:bg-gray-50 transition group ${clipboard?.id === folder.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
+                        onContextMenu={(e) => handleContextMenu(e, folder.id, "folder", folder.name)}
+                      >
                         <td className="px-4 py-3">
-                          <button
-                            onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
-                            className="flex items-center gap-3 w-full text-left"
-                          >
-                            <FolderIcon className="h-5 w-5 text-amber-500 shrink-0" />
-                            <span className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</span>
-                          </button>
+                          <div className="flex items-center gap-3">
+                            {folder.starred && <Star className="h-3 w-3 text-amber-400 shrink-0 fill-amber-400" />}
+                            <button
+                              onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
+                              className="flex items-center gap-3 w-full text-left"
+                            >
+                              <FolderIcon className="h-5 w-5 text-amber-500 shrink-0" />
+                              <span className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</span>
+                            </button>
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">—</td>
                         <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{folder.sharedBy || "—"}</td>
                         <td className="px-4 py-3 text-right">
-                          <button onClick={(e) => setActiveMenu({ id: folder.id, type: "folder", name: folder.name, x: e.clientX, y: e.clientY })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
+                          <button onClick={(e) => { e.stopPropagation(); setActiveMenu({ id: folder.id, type: "folder", name: folder.name, x: e.clientX, y: e.clientY }); }} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
                             <MoreVertical className="h-4 w-4 text-gray-500" />
                           </button>
                         </td>
                       </tr>
                     ))}
                     {files.map((file) => (
-                      <tr key={file.id} className="border-b hover:bg-gray-50 transition group">
+                      <tr
+                        key={file.id}
+                        className={`border-b hover:bg-gray-50 transition group ${clipboard?.id === file.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
+                        onContextMenu={(e) => handleContextMenu(e, file.id, "file", file.name)}
+                      >
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
+                            {file.starred && <Star className="h-3 w-3 text-amber-400 shrink-0 fill-amber-400" />}
                             <FileIcon className="h-5 w-5 text-blue-500 shrink-0" />
                             <span className="font-medium text-gray-900 truncate">{displayFilename(file.name)}</span>
                           </div>
@@ -474,7 +744,7 @@ export default function DashboardPage() {
                         <td className="px-4 py-3 text-gray-500 text-sm hidden sm:table-cell">{formatSize(file.size)}</td>
                         <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{file.sharedBy || "—"}</td>
                         <td className="px-4 py-3 text-right">
-                          <button onClick={(e) => setActiveMenu({ id: file.id, type: "file", name: file.name, x: e.clientX, y: e.clientY })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
+                          <button onClick={(e) => { e.stopPropagation(); setActiveMenu({ id: file.id, type: "file", name: file.name, x: e.clientX, y: e.clientY }); }} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
                             <MoreVertical className="h-4 w-4 text-gray-500" />
                           </button>
                         </td>
@@ -487,7 +757,11 @@ export default function DashboardPage() {
               {/* Mobile card view */}
               <div className="sm:hidden space-y-3">
                 {folders.map((folder) => (
-                  <div key={folder.id} className="bg-white rounded-xl border shadow-sm p-4">
+                  <div
+                    key={folder.id}
+                    className={`bg-white rounded-xl border shadow-sm p-4 ${clipboard?.id === folder.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
+                    onContextMenu={(e) => handleContextMenu(e, folder.id, "folder", folder.name)}
+                  >
                     <div className="flex items-center justify-between">
                       <button
                         onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
@@ -495,7 +769,10 @@ export default function DashboardPage() {
                       >
                         <FolderIcon className="h-8 w-8 text-amber-500 shrink-0" />
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</p>
+                          <div className="flex items-center gap-1">
+                            {folder.starred && <Star className="h-3 w-3 text-amber-400 fill-amber-400" />}
+                            <p className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</p>
+                          </div>
                           <p className="text-xs text-gray-500">Carpeta</p>
                         </div>
                       </button>
@@ -506,12 +783,19 @@ export default function DashboardPage() {
                   </div>
                 ))}
                 {files.map((file) => (
-                  <div key={file.id} className="bg-white rounded-xl border shadow-sm p-4">
+                  <div
+                    key={file.id}
+                    className={`bg-white rounded-xl border shadow-sm p-4 ${clipboard?.id === file.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
+                    onContextMenu={(e) => handleContextMenu(e, file.id, "file", file.name)}
+                  >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <FileIcon className="h-8 w-8 text-blue-500 shrink-0" />
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium text-gray-900 truncate">{displayFilename(file.name)}</p>
+                          <div className="flex items-center gap-1">
+                            {file.starred && <Star className="h-3 w-3 text-amber-400 fill-amber-400" />}
+                            <p className="font-medium text-gray-900 truncate">{displayFilename(file.name)}</p>
+                          </div>
                           <p className="text-xs text-gray-500">{formatSize(file.size)}</p>
                         </div>
                       </div>
@@ -561,61 +845,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {activeMenu && (() => {
-        const menu = activeMenu;
-        return (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-            <div className="fixed z-50 bg-white shadow-2xl border rounded-xl p-1.5 w-48 max-w-[calc(100vw-2rem)]" style={{ top: menu.y, left: menu.x }}>
-              {menu.type === "folder" ? (
-                <>
-                  <button onClick={() => { navigateToFolder(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                    <FolderIcon className="h-4 w-4" /> Abrir
-                  </button>
-                  {(!isSharedView || getSharePermission(menu.id, "folder") === "edit") && (
-                    <>
-                      {!isSharedView && (
-                        <button onClick={() => openShareModal(menu.id, "folder", menu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                          <Share2 className="h-4 w-4" /> Compartir
-                        </button>
-                      )}
-                      <button onClick={() => renameItem(menu.id, "folder", menu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                        <Edit2 className="h-4 w-4" /> Renombrar
-                      </button>
-                      <hr className="my-1" />
-                      <button onClick={() => deleteItem(menu.id, "folder")} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
-                        <Trash2 className="h-4 w-4" /> Borrar
-                      </button>
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  <button onClick={() => { downloadFile(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                    <Download className="h-4 w-4" /> Descargar
-                  </button>
-                  {(!isSharedView || getSharePermission(menu.id, "file") === "edit") && (
-                    <>
-                      {!isSharedView && (
-                        <button onClick={() => openShareModal(menu.id, "file", menu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                          <Share2 className="h-4 w-4" /> Compartir
-                        </button>
-                      )}
-                      <button onClick={() => renameItem(menu.id, "file", menu.name)} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-                        <Edit2 className="h-4 w-4" /> Renombrar
-                      </button>
-                      <hr className="my-1" />
-                      <button onClick={() => deleteItem(menu.id, "file")} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
-                        <Trash2 className="h-4 w-4" /> Borrar
-                      </button>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          </>
-        );
-      })()}
+      {activeMenu && <ContextMenu menu={activeMenu} />}
 
       {shareModal && (
         <>
@@ -671,6 +901,55 @@ export default function DashboardPage() {
               </div>
             )}
             <p className="text-xs text-gray-400 mt-4">La persona debe tener cuenta en CloudGram con ese correo.</p>
+          </div>
+        </>
+      )}
+
+      {/* Modal de Información */}
+      {infoModal && infoData && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => { setInfoModal(null); setInfoData(null); }} />
+          <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Información</h3>
+              <button onClick={() => { setInfoModal(null); setInfoData(null); }} className="p-1 hover:bg-gray-100 rounded"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="flex items-center gap-3 mb-4">
+              {infoModal.type === "folder" ? (
+                <FolderIcon className="h-10 w-10 text-amber-500" />
+              ) : (
+                <FileIcon className="h-10 w-10 text-blue-500" />
+              )}
+              <p className="font-medium text-gray-900 truncate">{displayFilename(infoModal.name)}</p>
+            </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Tipo</span>
+                <span className="text-gray-900">{infoModal.type === "folder" ? "Carpeta" : (infoData.mimeType as string || "Archivo")}</span>
+              </div>
+              {infoModal.type === "file" && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Tamaño</span>
+                  <span className="text-gray-900">{formatSize(infoData.size as number)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-gray-500">Favorito</span>
+                <span className="text-gray-900">{infoData.starred ? "Sí" : "No"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Compartido</span>
+                <span className="text-gray-900">{infoData.shared ? "Sí" : "No"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Creado</span>
+                <span className="text-gray-900">{formatDate(infoData.createdAt)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Modificado</span>
+                <span className="text-gray-900">{formatDate(infoData.updatedAt)}</span>
+              </div>
+            </div>
           </div>
         </>
       )}

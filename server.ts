@@ -14,19 +14,10 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 const app = express();
-const CORS_ORIGINS_ENV = process.env.CORS_ORIGINS;
-const ALLOWED_ORIGINS = CORS_ORIGINS_ENV ? CORS_ORIGINS_ENV.split(',').map(o => o.trim()) : null;
 
+// CORS abierto - la seguridad se maneja con verificación de token Firebase en cada endpoint
 app.use(cors({
-  origin: (origin, callback) => {
-    // Si no hay CORS_ORIGINS configurado, permitir todos los orígenes
-    // La seguridad se maneja con verificación de token en cada endpoint
-    if (!ALLOWED_ORIGINS || !origin || ALLOWED_ORIGINS.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
