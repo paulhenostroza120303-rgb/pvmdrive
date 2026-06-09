@@ -73,12 +73,22 @@ export default function DashboardPage() {
   const [publicLinkCopied, setPublicLinkCopied] = useState(false);
   const [infoModal, setInfoModal] = useState<{ id: string; type: "file" | "folder"; name: string } | null>(null);
   const [infoData, setInfoData] = useState<Record<string, unknown> | null>(null);
+  const [sortBy, setSortBy] = useState<"name" | "size" | "date">("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!user) router.push("/login");
     else fetchContents();
   }, [user, currentFolderId, viewMode]);
+
+  // Reordenar cuando cambien los criterios de ordenamiento
+  useEffect(() => {
+    if (files.length > 0 || folders.length > 0) {
+      // Forzar re-render con los nuevos criterios
+      fetchContents();
+    }
+  }, [sortBy, sortDirection]);
 
   // Cerrar menú al presionar Escape
   useEffect(() => {
@@ -95,6 +105,27 @@ export default function DashboardPage() {
     return token;
   };
 
+  // Función para ordenar archivos y carpetas
+  const sortItems = (items: any[]): any[] => {
+    return [...items].sort((a, b) => {
+      let comparison = 0;
+      
+      if (sortBy === "name") {
+        comparison = a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
+      } else if (sortBy === "size") {
+        const sizeA = a.size || 0;
+        const sizeB = b.size || 0;
+        comparison = sizeA - sizeB;
+      } else if (sortBy === "date") {
+        const dateA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        comparison = dateA - dateB;
+      }
+      
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+  };
+
   const fetchContents = async () => {
     setLoading(true);
     try {
@@ -106,8 +137,13 @@ export default function DashboardPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error cargando archivos");
-      setFiles(data.files || []);
-      setFolders(data.folders || []);
+      
+      // Aplicar ordenamiento
+      const sortedFiles = sortItems(data.files || []);
+      const sortedFolders = sortItems(data.folders || []);
+      
+      setFiles(sortedFiles);
+      setFolders(sortedFolders);
       setIsSharedView(Boolean(data.isSharedView || sharedRoot));
     } catch (err: unknown) {
       console.error(err);
@@ -430,6 +466,70 @@ export default function DashboardPage() {
     }
   };
 
+  const downloadFolderAsZip = async (folderId: string, folderName: string) => {
+    const token = await getToken();
+    const uploadUrl = process.env.NEXT_PUBLIC_UPLOAD_URL || "https://pvmdrive-production.up.railway.app";
+    const downloadId = crypto.randomUUID();
+
+    // Agregar al panel de descargas
+    setDownloads((prev) => [...prev, {
+      id: downloadId, name: `${folderName}.zip`, size: 0, progress: 0, status: "downloading",
+    }]);
+    setShowDownloadPanel(true);
+
+    try {
+      const res = await fetch(`${uploadUrl}/download-folder/${folderId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: "error", error: "Error al crear ZIP" } : d));
+        return;
+      }
+
+      // Descargar el ZIP como blob
+      const contentLength = Number(res.headers.get("Content-Length")) || 0;
+      
+      if (!res.body) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = `${folderName}.zip`; a.click();
+        URL.revokeObjectURL(url);
+        setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, progress: 100, status: "done" } : d));
+        setTimeout(() => setDownloads((prev) => prev.filter((d) => d.id !== downloadId)), 3000);
+        return;
+      }
+
+      // Leer el stream con progreso
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let receivedLength = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        receivedLength += value.length;
+        const progress = contentLength > 0 ? Math.round((receivedLength / contentLength) * 100) : 0;
+        setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, progress, size: receivedLength } : d));
+      }
+
+      // Crear blob y descargar
+      const blob = new Blob(chunks.map(c => new Uint8Array(c)));
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${folderName}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, progress: 100, status: "done" } : d));
+      setTimeout(() => setDownloads((prev) => prev.filter((d) => d.id !== downloadId)), 3000);
+    } catch {
+      setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: "error", error: "Error de conexión" } : d));
+    }
+  };
+
   const openShareModal = async (id: string, type: "file" | "folder", name: string) => {
     setShareModal({ id, type, name });
     setShareEmail("");
@@ -618,9 +718,14 @@ export default function DashboardPage() {
         <div ref={menuRef} className="fixed z-50 bg-white shadow-2xl border rounded-xl p-1.5 w-52 max-w-[calc(100vw-1rem)]" style={{ top: pos.y, left: pos.x }}>
           {/* Abrir / Descargar */}
           {menu.type === "folder" ? (
-            <button onClick={() => { navigateToFolder(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-              <FolderIcon className="h-4 w-4 text-amber-500" /> Abrir carpeta
-            </button>
+            <>
+              <button onClick={() => { navigateToFolder(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                <FolderIcon className="h-4 w-4 text-amber-500" /> Abrir carpeta
+              </button>
+              <button onClick={() => { downloadFolderAsZip(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                <Download className="h-4 w-4 text-blue-500" /> Descargar como ZIP
+              </button>
+            </>
           ) : (
             <button onClick={() => { const f = files.find(f => f.id === menu.id); downloadFile(menu.id, menu.name, f?.size); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
               <Download className="h-4 w-4 text-blue-500" /> Descargar
@@ -766,6 +871,38 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {/* Control de ordenamiento */}
+              <div className="relative group">
+                <button className="bg-gray-100 text-gray-700 px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-200 transition text-sm font-medium">
+                  <span className="hidden sm:inline">Ordenar por</span>
+                  {sortBy === "name" ? "Nombre" : sortBy === "size" ? "Tamaño" : "Fecha"}
+                  {sortDirection === "asc" ? " ↑" : " ↓"}
+                </button>
+                <div className="absolute right-0 top-full mt-2 bg-white border rounded-lg shadow-lg p-1 min-w-[180px] hidden group-hover:block z-10">
+                  <button
+                    onClick={() => { setSortBy("name"); setSortDirection(sortBy === "name" && sortDirection === "asc" ? "desc" : "asc"); }}
+                    className={`w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-100 flex items-center justify-between ${sortBy === "name" ? "bg-blue-50 text-blue-700" : ""}`}
+                  >
+                    <span>Nombre</span>
+                    {sortBy === "name" && <span>{sortDirection === "asc" ? "↑" : "↓"}</span>}
+                  </button>
+                  <button
+                    onClick={() => { setSortBy("size"); setSortDirection(sortBy === "size" && sortDirection === "asc" ? "desc" : "asc"); }}
+                    className={`w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-100 flex items-center justify-between ${sortBy === "size" ? "bg-blue-50 text-blue-700" : ""}`}
+                  >
+                    <span>Tamaño</span>
+                    {sortBy === "size" && <span>{sortDirection === "asc" ? "↑" : "↓"}</span>}
+                  </button>
+                  <button
+                    onClick={() => { setSortBy("date"); setSortDirection(sortBy === "date" && sortDirection === "asc" ? "desc" : "asc"); }}
+                    className={`w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-100 flex items-center justify-between ${sortBy === "date" ? "bg-blue-50 text-blue-700" : ""}`}
+                  >
+                    <span>Fecha</span>
+                    {sortBy === "date" && <span>{sortDirection === "asc" ? "↑" : "↓"}</span>}
+                  </button>
+                </div>
+              </div>
+              
               {/* Botón Pegar */}
               {clipboard && !isSharedView && (
                 <button
