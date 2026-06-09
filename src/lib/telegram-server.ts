@@ -88,21 +88,28 @@ export async function uploadFileChunked(buffer: Buffer, fileName: string): Promi
   assertTelegramConfig();
 
   const totalChunks = Math.ceil(buffer.length / MAX_CHUNK_SIZE);
-  const concurrencyLimit = 3; // Máximo 3 subidas simultáneas para evitar rate limiting
+  const concurrencyLimit = 5; // Aumentado a 5 subidas simultáneas
   const chunks: TelegramChunk[] = new Array(totalChunks);
 
-  console.log(`[Upload] Starting parallel upload: ${totalChunks} chunks`);
+  console.log(`[Upload] 🚀 Starting PARALLEL upload: ${totalChunks} chunks (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
+  console.log(`[Upload] Concurrency: ${concurrencyLimit} simultaneous uploads`);
 
   // Subir chunks en paralelo con límite de concurrencia
   for (let i = 0; i < totalChunks; i += concurrencyLimit) {
     const batchEnd = Math.min(i + concurrencyLimit, totalChunks);
     const batchPromises = [];
+    const batchStart = i;
+
+    console.log(`[Upload] 📤 Starting batch ${Math.floor(i / concurrencyLimit) + 1}: chunks ${i + 1}-${batchEnd}`);
 
     // Crear batch de promesas
     for (let j = i; j < batchEnd; j++) {
       const start = j * MAX_CHUNK_SIZE;
       const end = Math.min(start + MAX_CHUNK_SIZE, buffer.length);
       const chunkName = `${crypto.randomUUID()}.bin`;
+      const chunkSize = (end - start) / 1024 / 1024;
+      
+      console.log(`[Upload]   ├─ Chunk ${j + 1}: ${chunkSize.toFixed(1)} MB`);
       
       // Agregar reintentos para cada chunk
       batchPromises.push(
@@ -115,11 +122,13 @@ export async function uploadFileChunked(buffer: Buffer, fileName: string): Promi
     
     // Guardar resultados en orden
     for (let j = 0; j < batchResults.length; j++) {
-      chunks[i + j] = batchResults[j];
+      chunks[batchStart + j] = batchResults[j];
     }
 
-    console.log(`[Upload] Progress: ${batchEnd}/${totalChunks} chunks uploaded`);
+    console.log(`[Upload] ✅ Batch ${Math.floor(batchStart / concurrencyLimit) + 1} complete: ${batchEnd}/${totalChunks} chunks`);
   }
+
+  console.log(`[Upload] 🎉 All ${totalChunks} chunks uploaded successfully!`);
 
   return {
     fileId: chunks[0].fileId,
