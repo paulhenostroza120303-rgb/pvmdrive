@@ -6,6 +6,7 @@ import path from 'path';
 import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile, buildFileDownloadResponse } from './src/lib/storage-server';
 import { decodeUploadFilename, contentDispositionHeader } from './src/lib/filename';
+import { canAccessFile } from './src/lib/sharing';
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -13,8 +14,16 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 const app = express();
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000').split(',');
+
 app.use(cors({
-  origin: '*',
+  origin: (origin, callback) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -31,7 +40,22 @@ app.get('/health', (req, res) => {
 
 app.get('/download/:fileId', async (req, res) => {
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const token = authHeader.split('Bearer ')[1];
+    const decodedToken = await auth.verifyIdToken(token);
+    const userId = decodedToken.uid;
+    const userEmail = decodedToken.email || '';
+
     const { fileId } = req.params;
+
+    const allowed = await canAccessFile(userId, userEmail, fileId, 'view');
+    if (!allowed) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const download = await buildFileDownloadResponse(fileId);
     if (!download) return res.status(404).send('File not found');
 

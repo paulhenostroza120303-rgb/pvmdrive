@@ -1,16 +1,9 @@
 import { NextResponse } from "next/server";
-import { db, auth } from "@/lib/firebase-admin";
-import { buildFileDownloadResponse, renameItem, softDeleteItem } from "@/lib/storage-server";
+import { db } from "@/lib/firebase-admin";
+import { buildFileDownloadResponse, softDeleteItem } from "@/lib/storage-server";
 import { canAccessFile, canEditFolder } from "@/lib/sharing";
 import { contentDispositionHeader } from "@/lib/filename";
-
-async function getAuthUser(request: Request) {
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.split("Bearer ")[1];
-  const decoded = await auth.verifyIdToken(token);
-  return { uid: decoded.uid, email: decoded.email || "" };
-}
+import { getAuthUser } from "@/lib/auth-utils";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const id = (await params).id;
@@ -66,14 +59,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
     }
 
-    if (name !== undefined && type === "file") {
-      await renameItem(id, "file", name);
-    } else {
-      await db.collection(collection).doc(id).update(updateData);
-    }
+    await db.collection(collection).doc(id).update(updateData);
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    console.error("Backend Error en PATCH:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
@@ -97,6 +87,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     await softDeleteItem(id, type);
     return NextResponse.json({ success: true });
   } catch (error) {
+    console.error("Backend Error en DELETE:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

@@ -81,7 +81,7 @@ export interface Notification {
   createdAt: Date;
 }
 
-export type ViewMode = "grid" | "list";
+export type ViewMode = "drive" | "shared";
 
 export type SortOption = "name" | "size" | "createdAt" | "updatedAt" | "type";
 

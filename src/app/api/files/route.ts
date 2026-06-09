@@ -1,28 +1,23 @@
 import { NextResponse } from "next/server";
 import { listFolderContents } from "@/lib/storage-server";
 import { listSharedWithUser } from "@/lib/sharing";
-import { auth } from "@/lib/firebase-admin";
+import { getAuthUser } from "@/lib/auth-utils";
 
 export async function GET(request: Request) {
   try {
-    const authHeader = request.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const token = authHeader.split("Bearer ")[1];
-    const decodedToken = await auth.verifyIdToken(token);
-    const userId = decodedToken.uid;
-    const userEmail = decodedToken.email || "";
+    const user = await getAuthUser(request);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(request.url);
     const parentId = searchParams.get("parentId");
     const shared = searchParams.get("shared") === "true";
 
     if (shared && !parentId) {
-      const contents = await listSharedWithUser(userId, userEmail);
+      const contents = await listSharedWithUser(user.uid, user.email);
       return NextResponse.json({ ...contents, isSharedView: true });
     }
 
-    const contents = await listFolderContents(userId, userEmail, parentId || undefined);
+    const contents = await listFolderContents(user.uid, user.email, parentId || undefined);
     return NextResponse.json(contents);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal Server Error";

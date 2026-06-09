@@ -22,8 +22,9 @@ export async function POST(request: Request) {
     const result = await uploadUserFile(userId, buffer, fileName, mimeType, folderId || undefined);
     
     return NextResponse.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Internal Server Error";
     console.error("Upload proxy error:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

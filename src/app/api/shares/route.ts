@@ -1,14 +1,6 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/firebase-admin";
 import { createShare, listSharesForResource, listSharedWithUser, type ResourceType } from "@/lib/sharing";
-
-async function getAuthUser(request: Request) {
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const token = authHeader.split("Bearer ")[1];
-  const decoded = await auth.verifyIdToken(token);
-  return { uid: decoded.uid, email: decoded.email || "" };
-}
+import { getAuthUser } from "@/lib/auth-utils";
 
 export async function GET(request: Request) {
   try {

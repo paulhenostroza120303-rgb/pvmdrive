@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useRouter } from "next/navigation";
-import { DriveFile, Folder, BreadcrumbItem } from "@/types";
+import { DriveFile, Folder, BreadcrumbItem, ViewMode } from "@/types";
 import { displayFilename } from "@/lib/filename";
 import {
   Loader2, Upload, File as FileIcon, Folder as FolderIcon, Plus,
@@ -26,8 +26,6 @@ interface ShareEntry {
   permission: string;
 }
 
-type ViewMode = "drive" | "shared";
-
 export default function DashboardPage() {
   const { user } = useAuth();
   const router = useRouter();
@@ -38,7 +36,7 @@ export default function DashboardPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("drive");
   const [isSharedView, setIsSharedView] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeMenu, setActiveMenu] = useState<{ id: string; type: "file" | "folder"; name: string } | null>(null);
+  const [activeMenu, setActiveMenu] = useState<{ id: string; type: "file" | "folder"; name: string; x: number; y: number } | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [showUploadPanel, setShowUploadPanel] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -172,6 +170,23 @@ export default function DashboardPage() {
     fetchContents();
   };
 
+  const readAllEntries = (reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> => {
+    return new Promise((resolve, reject) => {
+      const allEntries: FileSystemEntry[] = [];
+      const readBatch = () => {
+        reader.readEntries((entries) => {
+          if (entries.length === 0) {
+            resolve(allEntries);
+          } else {
+            allEntries.push(...entries);
+            readBatch();
+          }
+        }, reject);
+      };
+      readBatch();
+    });
+  };
+
   const processEntry = async (entry: FileSystemEntry, parentId: string | null, token: string) => {
     if (entry.name.startsWith(".")) return;
     if (entry.isFile) {
@@ -180,7 +195,7 @@ export default function DashboardPage() {
     } else if (entry.isDirectory) {
       const folderId = await createFolderInDB(entry.name, parentId, token);
       const reader = (entry as FileSystemDirectoryEntry).createReader();
-      const subEntries = await new Promise<FileSystemEntry[]>((resolve) => reader.readEntries(resolve));
+      const subEntries = await readAllEntries(reader);
       for (const sub of subEntries) await processEntry(sub, folderId, token);
     }
   };
@@ -197,12 +212,12 @@ export default function DashboardPage() {
 
   const createFolder = async () => {
     const name = prompt("Nombre de la carpeta:");
-    if (!name || isSharedView) return;
+    if (!name?.trim() || isSharedView) return;
     const token = await getToken();
     await fetch("/api/folders", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name, parentId: currentFolderId }),
+      body: JSON.stringify({ name: name.trim(), parentId: currentFolderId }),
     });
     fetchContents();
   };
@@ -271,6 +286,11 @@ export default function DashboardPage() {
 
   const submitShare = async () => {
     if (!shareModal || !shareEmail.trim()) return;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(shareEmail.trim())) {
+      setShareError("Correo electrónico inválido");
+      return;
+    }
     setShareLoading(true);
     setShareError("");
     try {
@@ -312,7 +332,8 @@ export default function DashboardPage() {
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
   };
 
   const getSharePermission = (id: string, type: "file" | "folder") => {
@@ -324,12 +345,12 @@ export default function DashboardPage() {
     <div className="flex h-screen bg-gray-50" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
-      
+
       <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r flex flex-col transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="p-6 border-b">
           <h2 className="text-xl font-bold text-blue-600">CloudGram</h2>
@@ -362,7 +383,7 @@ export default function DashboardPage() {
         <header className="bg-white border-b px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 flex-1 min-w-0">
-              <button 
+              <button
                 onClick={() => setSidebarOpen(true)}
                 className="lg:hidden p-2 hover:bg-gray-100 rounded-lg"
               >
@@ -370,25 +391,24 @@ export default function DashboardPage() {
               </button>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1 text-sm text-gray-500 mb-1 flex-wrap">
-                {breadcrumbs.map((crumb, i) => (
-                  <span key={crumb.id ?? "root"} className="flex items-center gap-1">
-                    {i > 0 && <ChevronRight className="h-3 w-3" />}
-                    <button
-                      onClick={() => {
-                        setCurrentFolderId(crumb.id);
-                        setBreadcrumbs((prev) => prev.slice(0, i + 1));
-                      }}
-                      className={`hover:text-blue-600 truncate max-w-[160px] ${i === breadcrumbs.length - 1 ? "text-gray-900 font-medium" : ""}`}
-                    >
-                      {i === 0 ? <span className="flex items-center gap-1"><Home className="h-3 w-3" />{crumb.name}</span> : crumb.name}
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <h1 className="text-xl font-semibold text-gray-900 truncate">
-                {breadcrumbs[breadcrumbs.length - 1]?.name || "Mi unidad"}
-              </h1>
-              </div>
+                  {breadcrumbs.map((crumb, i) => (
+                    <span key={crumb.id ?? "root"} className="flex items-center gap-1">
+                      {i > 0 && <ChevronRight className="h-3 w-3" />}
+                      <button
+                        onClick={() => {
+                          setCurrentFolderId(crumb.id);
+                          setBreadcrumbs((prev) => prev.slice(0, i + 1));
+                        }}
+                        className={`hover:text-blue-600 truncate max-w-[160px] ${i === breadcrumbs.length - 1 ? "text-gray-900 font-medium" : ""}`}
+                      >
+                        {i === 0 ? <span className="flex items-center gap-1"><Home className="h-3 w-3" />{crumb.name}</span> : crumb.name}
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <h1 className="text-xl font-semibold text-gray-900 truncate">
+                  {breadcrumbs[breadcrumbs.length - 1]?.name || "Mi unidad"}
+                </h1>
               </div>
             </div>
             {viewMode === "drive" && !isSharedView && (
@@ -437,7 +457,7 @@ export default function DashboardPage() {
                         <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">—</td>
                         <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{folder.sharedBy || "—"}</td>
                         <td className="px-4 py-3 text-right">
-                          <button onClick={() => setActiveMenu({ id: folder.id, type: "folder", name: folder.name })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
+                          <button onClick={(e) => setActiveMenu({ id: folder.id, type: "folder", name: folder.name, x: e.clientX, y: e.clientY })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
                             <MoreVertical className="h-4 w-4 text-gray-500" />
                           </button>
                         </td>
@@ -454,7 +474,7 @@ export default function DashboardPage() {
                         <td className="px-4 py-3 text-gray-500 text-sm hidden sm:table-cell">{formatSize(file.size)}</td>
                         <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{file.sharedBy || "—"}</td>
                         <td className="px-4 py-3 text-right">
-                          <button onClick={() => setActiveMenu({ id: file.id, type: "file", name: file.name })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
+                          <button onClick={(e) => setActiveMenu({ id: file.id, type: "file", name: file.name, x: e.clientX, y: e.clientY })} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
                             <MoreVertical className="h-4 w-4 text-gray-500" />
                           </button>
                         </td>
@@ -479,7 +499,7 @@ export default function DashboardPage() {
                           <p className="text-xs text-gray-500">Carpeta</p>
                         </div>
                       </button>
-                      <button onClick={() => setActiveMenu({ id: folder.id, type: "folder", name: folder.name })} className="p-2 hover:bg-gray-100 rounded-lg">
+                      <button onClick={(e) => setActiveMenu({ id: folder.id, type: "folder", name: folder.name, x: e.clientX, y: e.clientY })} className="p-2 hover:bg-gray-100 rounded-lg">
                         <MoreVertical className="h-5 w-5 text-gray-500" />
                       </button>
                     </div>
@@ -495,7 +515,7 @@ export default function DashboardPage() {
                           <p className="text-xs text-gray-500">{formatSize(file.size)}</p>
                         </div>
                       </div>
-                      <button onClick={() => setActiveMenu({ id: file.id, type: "file", name: file.name })} className="p-2 hover:bg-gray-100 rounded-lg shrink-0">
+                      <button onClick={(e) => setActiveMenu({ id: file.id, type: "file", name: file.name, x: e.clientX, y: e.clientY })} className="p-2 hover:bg-gray-100 rounded-lg shrink-0">
                         <MoreVertical className="h-5 w-5 text-gray-500" />
                       </button>
                     </div>
@@ -546,7 +566,7 @@ export default function DashboardPage() {
         return (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-            <div className="fixed z-50 bg-white shadow-2xl border rounded-xl p-1.5 w-48 max-w-[calc(100vw-2rem)]" style={{ top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}>
+            <div className="fixed z-50 bg-white shadow-2xl border rounded-xl p-1.5 w-48 max-w-[calc(100vw-2rem)]" style={{ top: menu.y, left: menu.x }}>
               {menu.type === "folder" ? (
                 <>
                   <button onClick={() => { navigateToFolder(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import ImageKit from "imagekit";
+import { getAuthUser } from "@/lib/auth-utils";
 
 const imagekit = new ImageKit({
   publicKey: process.env.IMAGEKIT_PUBLIC_KEY!,
@@ -7,12 +8,11 @@ const imagekit = new ImageKit({
   urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT!,
 });
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    console.log("DEBUG AUTH: Public Key Length:", process.env.IMAGEKIT_PUBLIC_KEY?.length);
-    console.log("DEBUG AUTH: Private Key Length:", process.env.IMAGEKIT_PRIVATE_KEY?.length);
-    console.log("DEBUG AUTH: Endpoint:", process.env.IMAGEKIT_URL_ENDPOINT);
-    
+    const user = await getAuthUser(request);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const authenticationParameters = imagekit.getAuthenticationParameters();
     return NextResponse.json(authenticationParameters);
   } catch (error) {

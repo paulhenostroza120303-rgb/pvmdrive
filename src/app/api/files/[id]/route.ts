@@ -1,19 +1,16 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/firebase-admin";
 import { buildFileDownloadResponse } from "@/lib/storage-server";
 import { canAccessFile } from "@/lib/sharing";
 import { contentDispositionHeader } from "@/lib/filename";
+import { getAuthUser } from "@/lib/auth-utils";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const id = (await params).id;
   try {
-    const authHeader = request.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await getAuthUser(request);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const token = authHeader.split("Bearer ")[1];
-    const decoded = await auth.verifyIdToken(token);
-
-    const allowed = await canAccessFile(decoded.uid, decoded.email || "", id, "view");
+    const allowed = await canAccessFile(user.uid, user.email, id, "view");
     if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const download = await buildFileDownloadResponse(id);
