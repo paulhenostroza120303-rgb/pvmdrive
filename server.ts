@@ -3,7 +3,7 @@ import multer from 'multer';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
-const archiver = require('archiver');
+import { ZipArchive } from 'archiver';
 import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile, buildFileDownloadResponse, getFileDoc } from './src/lib/storage-server';
 import { decodeUploadFilename, contentDispositionHeader } from './src/lib/filename';
@@ -184,7 +184,7 @@ app.get('/download-folder/:folderId', async (req, res) => {
     res.setHeader('Content-Type', 'application/zip');
 
     // Crear archivo ZIP en streaming
-    const archive = archiver('zip', {
+    const archive = new ZipArchive({
       zlib: { level: 6 } // Nivel de compresión balanceado
     });
 
