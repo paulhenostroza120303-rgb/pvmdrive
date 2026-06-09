@@ -42,6 +42,7 @@
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.6.0",
     "tailwindcss-animate": "^1.0.7",
+    "telegram": "^2.26.22",
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },
