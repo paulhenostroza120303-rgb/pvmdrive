@@ -46,4 +46,18 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Upload server running on port ${PORT}`));
+const HOST = '0.0.0.0';
+
+app.listen(Number(PORT), HOST, () => {
+  console.log(`🚀 Upload server is officially ONLINE`);
+  console.log(`📡 Listening on http://${HOST}:${PORT}`);
+});
+
+// Capturar errores globales para que el servidor no se cierre sin avisar
+process.on('uncaughtException', (err) => {
+  console.error('❌ UNCAUGHT EXCEPTION:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('⚠️ UNHANDLED REJECTION at:', promise, 'reason:', reason);
+});
