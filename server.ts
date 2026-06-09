@@ -14,11 +14,14 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 const app = express();
-const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000').split(',');
+const CORS_ORIGINS_ENV = process.env.CORS_ORIGINS;
+const ALLOWED_ORIGINS = CORS_ORIGINS_ENV ? CORS_ORIGINS_ENV.split(',').map(o => o.trim()) : null;
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    // Si no hay CORS_ORIGINS configurado, permitir todos los orígenes
+    // La seguridad se maneja con verificación de token en cada endpoint
+    if (!ALLOWED_ORIGINS || !origin || ALLOWED_ORIGINS.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
