@@ -842,9 +842,18 @@ export default function DashboardPage() {
               </button>
             </>
           ) : (
-            <button onClick={() => { const f = files.find(f => f.id === menu.id); downloadFile(menu.id, menu.name, f?.size); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
-              <Download className="h-4 w-4 text-blue-500" /> Descargar
-            </button>
+            <>
+              <button onClick={() => { const f = files.find(f => f.id === menu.id); previewFile(menu.id, menu.name, f?.mimeType || 'application/octet-stream'); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                <svg className="h-4 w-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                Vista previa
+              </button>
+              <button onClick={() => { const f = files.find(f => f.id === menu.id); downloadFile(menu.id, menu.name, f?.size); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+                <Download className="h-4 w-4 text-blue-500" /> Descargar
+              </button>
+            </>
           )}
 
           <hr className="my-1" />
@@ -1092,11 +1101,85 @@ export default function DashboardPage() {
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6"
           onContextMenu={(e) => {
-            // Click derecho en zona vacía = no hacer nada (o mostrar menú de carpeta)
             e.preventDefault();
           }}
         >
-          {loading ? (
+          {/* Vista de Papelera */}
+          {trashView ? (
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-gray-900">Papelera</h2>
+                {trashItems.length > 0 && (
+                  <button
+                    onClick={emptyTrash}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition text-sm font-medium"
+                  >
+                    Vaciar papelera
+                  </button>
+                )}
+              </div>
+              
+              {trashLoading ? (
+                <div className="flex justify-center p-20"><Loader2 className="animate-spin h-8 w-8 text-blue-600" /></div>
+              ) : trashItems.length === 0 ? (
+                <div className="text-center py-20 text-gray-500">
+                  <Trash2 className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                  <p className="font-medium">La papelera está vacía</p>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-gray-50 border-b text-gray-500 text-xs uppercase tracking-wide">
+                        <th className="px-4 py-3 font-medium">Nombre</th>
+                        <th className="px-4 py-3 font-medium hidden sm:table-cell">Tamaño</th>
+                        <th className="px-4 py-3 font-medium hidden md:table-cell">Eliminado</th>
+                        <th className="px-4 py-3 font-medium text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trashItems.map((item) => (
+                        <tr key={item.id} className="border-b hover:bg-gray-50 transition">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              {item.type === "folder" ? (
+                                <FolderIcon className="h-5 w-5 text-amber-500" />
+                              ) : (
+                                <FileIcon className="h-5 w-5 text-blue-500" />
+                              )}
+                              <span className="font-medium text-gray-900 truncate">{item.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">
+                            {item.size ? formatSize(item.size) : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">
+                            {item.deletedAt ? new Date(item.deletedAt.toDate()).toLocaleDateString() : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => restoreItem(item.id, item.type)}
+                                className="text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-sm font-medium"
+                              >
+                                Restaurar
+                              </button>
+                              <button
+                                onClick={() => permanentDelete(item.id, item.type)}
+                                className="text-red-600 hover:bg-red-50 px-2 py-1 rounded text-sm font-medium"
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : loading ? (
             <div className="flex justify-center p-20"><Loader2 className="animate-spin h-8 w-8 text-blue-600" /></div>
           ) : files.length === 0 && folders.length === 0 ? (
             <div className="text-center py-20 text-gray-500">
@@ -1437,6 +1520,45 @@ export default function DashboardPage() {
                 <span className="text-gray-500">Modificado</span>
                 <span className="text-gray-900">{formatDate(infoData.updatedAt)}</span>
               </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Modal de Preview */}
+      {previewModal && (
+        <>
+          <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center" onClick={closePreview} />
+          <div className="fixed inset-4 sm:inset-8 bg-white rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+            {/* Header del modal */}
+            <div className="bg-gray-50 px-4 sm:px-6 py-3 border-b flex items-center justify-between">
+              <h3 className="font-semibold text-gray-900 truncate flex-1">{previewModal.name}</h3>
+              <button onClick={closePreview} className="ml-4 p-1.5 hover:bg-gray-200 rounded-lg transition">
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+            
+            {/* Contenido del preview */}
+            <div className="flex-1 overflow-auto bg-gray-100 flex items-center justify-center p-4">
+              {previewModal.mimeType.startsWith('image/') ? (
+                <img src={previewModal.url} alt={previewModal.name} className="max-w-full max-h-full object-contain rounded-lg shadow-lg" />
+              ) : previewModal.mimeType.startsWith('video/') ? (
+                <video src={previewModal.url} controls className="max-w-full max-h-full rounded-lg shadow-lg" />
+              ) : previewModal.mimeType === 'application/pdf' ? (
+                <iframe src={previewModal.url} className="w-full h-full border-0 rounded-lg" />
+              ) : (
+                <div className="text-center text-gray-500">
+                  <FileIcon className="h-24 w-24 mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg font-medium">Vista previa no disponible</p>
+                  <p className="text-sm mt-1">{previewModal.mimeType}</p>
+                  <button
+                    onClick={() => downloadFile(previewModal.id, previewModal.name)}
+                    className="mt-4 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+                  >
+                    Descargar archivo
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </>
