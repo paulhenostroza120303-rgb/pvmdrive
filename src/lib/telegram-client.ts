@@ -8,7 +8,21 @@ const TARGET_CHANNEL = process.env.TELEGRAM_CHANNEL_ID || "";
 
 let client: TelegramClient | null = null;
 
+export function hasGramJsConfig(): boolean {
+  return Boolean(API_ID && API_HASH && SESSION_STRING && TARGET_CHANNEL);
+}
+
+function assertGramJsConfig() {
+  if (!hasGramJsConfig()) {
+    throw new Error(
+      "Large file upload requires TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION and TELEGRAM_CHANNEL_ID"
+    );
+  }
+}
+
 export async function getTelegramClient() {
+  assertGramJsConfig();
+
   if (client) return client;
 
   const session = new StringSession(SESSION_STRING);
@@ -17,18 +31,17 @@ export async function getTelegramClient() {
   });
 
   await client.connect();
-  
+
   try {
     await client.getMe();
-  } catch (e) {
-    console.error("❌ Telegram Client Session Invalid.");
+  } catch {
+    console.error("Telegram Client Session Invalid.");
     throw new Error("Invalid Telegram Session");
   }
 
   return client;
 }
 
-// GramJS requiere CustomFile para buffers (no acepta Buffer directamente)
 class CustomFile {
   constructor(
     public name: string,
@@ -39,33 +52,43 @@ class CustomFile {
 }
 
 export async function uploadFileClient(buffer: Buffer, fileName: string): Promise<{
-  fileId: string;
-  filePath: string;
   messageId: number;
   chatId: string;
-  chunks: null;
 }> {
-  const client = await getTelegramClient();
-  
-  // Usamos CustomFile obligatoriamente para buffers en GramJS
+  const tgClient = await getTelegramClient();
+
   const customFile = new CustomFile(fileName, buffer.length, undefined, buffer);
-  
-  // Pasamos el objeto directamente en la posición de 'file'
-  const result = await (client as any).sendFile(TARGET_CHANNEL, {
+
+  const message = await (tgClient as TelegramClient & {
+    sendFile: (entity: string, options: { file: CustomFile; caption: string }) => Promise<{ id: number }>;
+  }).sendFile(TARGET_CHANNEL, {
     file: customFile,
     caption: "",
   });
 
   return {
-    fileId: result.id.toString(),
-    filePath: result.id.toString(),
-    messageId: result.id,
+    messageId: message.id,
     chatId: TARGET_CHANNEL,
-    chunks: null,
   };
 }
 
+export async function downloadFileClient(messageId: number, chatId: string): Promise<Buffer> {
+  const tgClient = await getTelegramClient();
+  const messages = await tgClient.getMessages(chatId, { ids: [messageId] });
+
+  if (!messages?.length || !messages[0]) {
+    throw new Error("Telegram message not found for download");
+  }
+
+  const data = await tgClient.downloadMedia(messages[0], {});
+  if (!data) {
+    throw new Error("Failed to download file from Telegram");
+  }
+
+  return Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+}
+
 export async function deleteMessageClient(messageId: number): Promise<void> {
-  const client = await getTelegramClient();
-  await (client as any).deleteMessages(TARGET_CHANNEL, [messageId]);
+  const tgClient = await getTelegramClient();
+  await tgClient.deleteMessages(TARGET_CHANNEL, [messageId], { revoke: true });
 }

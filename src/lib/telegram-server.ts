@@ -3,11 +3,8 @@ const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || "";
 const API_BASE = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
 // Telegram Bot API: getFile/download limit is 20 MB per file
+export const BOT_API_MAX_BYTES = 20 * 1024 * 1024;
 const MAX_CHUNK_SIZE = 18 * 1024 * 1024;
-
-function shouldChunk(size: number): boolean {
-  return size > MAX_CHUNK_SIZE;
-}
 
 export interface TelegramChunk {
   index: number;
@@ -87,19 +84,32 @@ function assertTelegramConfig() {
   }
 }
 
+export async function uploadFileChunked(buffer: Buffer, fileName: string): Promise<UploadResult> {
+  assertTelegramConfig();
+
+  const chunks: TelegramChunk[] = [];
+  const totalChunks = Math.ceil(buffer.length / MAX_CHUNK_SIZE);
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * MAX_CHUNK_SIZE;
+    const end = Math.min(start + MAX_CHUNK_SIZE, buffer.length);
+    const chunkName = `${crypto.randomUUID()}.bin`;
+    const chunk = await sendFileChunk(buffer.subarray(start, end), chunkName, i);
+    chunks.push(chunk);
+  }
+  return {
+    fileId: chunks[0].fileId,
+    filePath: chunks[0].filePath,
+    messageId: chunks[0].messageId,
+    chatId: chunks[0].chatId,
+    chunks,
+  };
+}
+
 export async function uploadFile(buffer: Buffer, fileName: string): Promise<UploadResult> {
   assertTelegramConfig();
 
-  if (shouldChunk(buffer.length)) {
-    const chunks: TelegramChunk[] = [];
-    const totalChunks = Math.ceil(buffer.length / MAX_CHUNK_SIZE);
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * MAX_CHUNK_SIZE;
-      const end = Math.min(start + MAX_CHUNK_SIZE, buffer.length);
-      const chunk = await sendFileChunk(buffer.subarray(start, end), `${fileName}.part${i + 1}`, i);
-      chunks.push(chunk);
-    }
-    return { fileId: chunks[0].fileId, filePath: chunks[0].filePath, messageId: chunks[0].messageId, chatId: chunks[0].chatId, chunks };
+  if (buffer.length > BOT_API_MAX_BYTES) {
+    throw new Error("File exceeds Bot API limit; use GramJS for large files");
   }
 
   const chunk = await sendFileChunk(buffer, fileName, 0);

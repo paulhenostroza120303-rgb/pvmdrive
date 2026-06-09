@@ -1,6 +1,9 @@
 import { db } from "./firebase-admin";
-import { uploadFile, resolveFilePath } from "./telegram-server";
+import { uploadFile, uploadFileChunked, resolveFilePath, BOT_API_MAX_BYTES } from "./telegram-server";
+import { uploadFileClient, downloadFileClient, hasGramJsConfig } from "./telegram-client";
 import type { DriveFile } from "../types";
+
+type StorageMethod = "bot" | "gramjs" | "chunked";
 
 const FILES_COLLECTION = "files";
 const FOLDERS_COLLECTION = "folders";
@@ -23,10 +26,20 @@ async function resolveStoredFilePath(storedPath: string | undefined, fileId: str
 }
 
 interface StoredFile extends DriveFile {
+  storageMethod?: StorageMethod;
   telegramFileId: string;
   telegramFilePath: string;
   telegramMessageId: number;
   telegramChatId: string;
+}
+
+function bufferToStream(buffer: Buffer): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(buffer));
+      controller.close();
+    },
+  });
 }
 
 export async function getDownloadUrl(fileId: string) {
@@ -46,6 +59,11 @@ export async function buildFileDownloadResponse(fileId: string) {
 
   const fileName = file.originalName || file.name;
   const mimeType = file.mimeType || "application/octet-stream";
+
+  if (file.storageMethod === "gramjs" || (!file.storageMethod && !file.telegramFilePath && file.telegramMessageId)) {
+    const buffer = await downloadFileClient(file.telegramMessageId, file.telegramChatId);
+    return { stream: bufferToStream(buffer), mimeType, fileName };
+  }
 
   const chunksSnap = await db.collection(CHUNKS_COLLECTION).where("fileId", "==", fileId).get();
 
@@ -92,9 +110,37 @@ export async function buildFileDownloadResponse(fileId: string) {
 }
 
 export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileName: string, mimeType: string, folderId?: string) {
-  const result = await uploadFile(fileBuffer, fileName);
   const fileId = crypto.randomUUID();
   const now = new Date();
+
+  let storageMethod: StorageMethod;
+  let telegramFileId = "";
+  let telegramFilePath = "";
+  let telegramMessageId = 0;
+  let telegramChatId = "";
+  let chunks: Awaited<ReturnType<typeof uploadFileChunked>>["chunks"] = null;
+
+  if (fileBuffer.length <= BOT_API_MAX_BYTES) {
+    const result = await uploadFile(fileBuffer, fileName);
+    storageMethod = "bot";
+    telegramFileId = result.fileId;
+    telegramFilePath = result.filePath;
+    telegramMessageId = result.messageId;
+    telegramChatId = result.chatId;
+  } else if (hasGramJsConfig()) {
+    const result = await uploadFileClient(fileBuffer, fileName);
+    storageMethod = "gramjs";
+    telegramMessageId = result.messageId;
+    telegramChatId = result.chatId;
+  } else {
+    const result = await uploadFileChunked(fileBuffer, fileName);
+    storageMethod = "chunked";
+    telegramFileId = result.fileId;
+    telegramFilePath = result.filePath;
+    telegramMessageId = result.messageId;
+    telegramChatId = result.chatId;
+    chunks = result.chunks;
+  }
 
   const fileData = {
     userId,
@@ -103,10 +149,11 @@ export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileNam
     mimeType,
     size: fileBuffer.length,
     folderId: folderId || null,
-    telegramFileId: result.fileId,
-    telegramFilePath: result.filePath,
-    telegramMessageId: result.messageId,
-    telegramChatId: result.chatId,
+    storageMethod,
+    telegramFileId,
+    telegramFilePath,
+    telegramMessageId,
+    telegramChatId,
     starred: false,
     trashed: false,
     shared: false,
@@ -122,9 +169,9 @@ export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileNam
 
   await db.collection(FILES_COLLECTION).doc(fileId).set(fileData);
 
-  if (result.chunks?.length) {
+  if (chunks?.length) {
     const batch = db.batch();
-    for (const chunk of result.chunks) {
+    for (const chunk of chunks) {
       const chunkRef = db.collection(CHUNKS_COLLECTION).doc();
       batch.set(chunkRef, {
         fileId,
