@@ -39,9 +39,9 @@ export async function uploadFileClient(buffer: Buffer, fileName: string): Promis
   const client = await getTelegramClient();
   
   // Subir el archivo como un único documento (Hasta 2GB)
-  const result = await client.sendFile(TARGET_CHANNEL, buffer, {
+  const result = await (client as any).sendFile(TARGET_CHANNEL, buffer, {
     fileName: fileName,
-  } as any);
+  });
 
   // En MTProto, el fileId es el ID del mensaje o la referencia al documento
   // Guardamos la info necesaria para la base de datos
