@@ -80,12 +80,16 @@ export async function downloadFileClient(messageId: number, chatId: string): Pro
     throw new Error("Telegram message not found for download");
   }
 
-  const data = await tgClient.downloadMedia(messages[0], {});
+  const data: unknown = await tgClient.downloadMedia(messages[0], {});
   if (!data) {
     throw new Error("Failed to download file from Telegram");
   }
 
-  return Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof Uint8Array) return Buffer.from(data);
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (typeof data === "string") return Buffer.from(data, "binary");
+  throw new Error("Unexpected download format from Telegram");
 }
 
 export async function deleteMessageClient(messageId: number): Promise<void> {
