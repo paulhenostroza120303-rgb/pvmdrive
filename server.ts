@@ -104,11 +104,11 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    // Pasar la ruta del archivo directamente a GramJS para evitar cargar en memoria
-    const result = await uploadUserFile(userId, file.path, file.originalname, file.mimetype, file.size, folderId);
+    const fileBuffer = fs.readFileSync(file.path);
+    const result = await uploadUserFile(userId, fileBuffer, file.originalname, file.mimetype, folderId);
     
-    // Borrar el archivo temporal del disco
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    res.json(result);
     res.json(result);
   } catch (error: any) {
     console.error("Upload Error:", error);

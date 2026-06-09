@@ -1,13 +1,5 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
-class CustomFile {
-  constructor(
-    public name: string,
-    public size: number,
-    public path: string | undefined,
-    public buffer: Buffer | undefined
-  ) {}
-}
 
 const API_ID = Number(process.env.TELEGRAM_API_ID || 0);
 const API_HASH = process.env.TELEGRAM_API_HASH || "";
@@ -26,18 +18,17 @@ export async function getTelegramClient() {
 
   await client.connect();
   
-  // Verificar si la sesión es válida
   try {
     await client.getMe();
   } catch (e) {
-    console.error("❌ Telegram Client Session Invalid. Please generate a new session string.");
+    console.error("❌ Telegram Client Session Invalid.");
     throw new Error("Invalid Telegram Session");
   }
 
   return client;
 }
 
-export async function uploadFileClient(filePath: string, fileName: string, fileSize: number): Promise<{
+export async function uploadFileClient(buffer: Buffer, fileName: string): Promise<{
   fileId: string;
   filePath: string;
   messageId: number;
@@ -45,22 +36,16 @@ export async function uploadFileClient(filePath: string, fileName: string, fileS
   chunks: null;
 }> {
   const client = await getTelegramClient();
-
-  // Crear un CustomFile con la ruta del archivo para que GramJS lo lea directamente
-  // GramJS usa el buffer si es menor a 20MB y la ruta si es mayor
-  const customFile = new CustomFile(fileName, fileSize, filePath, undefined);
   
-  const result = await (client as any).sendFile(TARGET_CHANNEL, {
-    file: customFile,
+  // Usamos la forma más simple: (chat, buffer, options)
+  // Casting a any para evitar conflictos de tipos en el build
+  const result = await (client as any).sendFile(TARGET_CHANNEL, buffer, {
     fileName: fileName,
-    fileSize: fileSize,
   });
 
-  // En MTProto, el fileId es el ID del mensaje o la referencia al documento
-  // Guardamos la info necesaria para la base de datos
   return {
     fileId: result.id.toString(),
-    filePath: result.id.toString(), // En cuenta personal usamos el ID del mensaje
+    filePath: result.id.toString(),
     messageId: result.id,
     chatId: TARGET_CHANNEL,
     chunks: null,
