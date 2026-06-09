@@ -1,6 +1,8 @@
 import express from 'express';
 import multer from 'multer';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile } from './src/lib/storage-server';
 
@@ -17,8 +19,11 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Upload server is alive!' });
 });
 
-// Configuración de Multer para manejar archivos en memoria
-const upload = multer({ storage: multer.memoryStorage() });
+// Configuración de Multer para usar disco en lugar de memoria (Evita crashes con archivos GB)
+const upload = multer({ 
+  dest: 'uploads/',
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 } // Límite de 2GB
+});
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
@@ -36,7 +41,13 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const result = await uploadUserFile(userId, file.buffer, file.originalname, file.mimetype, folderId);
+    // Leer el archivo desde el disco en lugar de la memoria
+    const fileBuffer = fs.readFileSync(file.path);
+    
+    const result = await uploadUserFile(userId, fileBuffer, file.originalname, file.mimetype, folderId);
+    
+    // Borrar el archivo temporal del disco después de subirlo
+    fs.unlinkSync(file.path);
     
     res.json(result);
   } catch (error: any) {
