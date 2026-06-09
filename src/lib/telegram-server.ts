@@ -2,7 +2,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || "";
 const API_BASE = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
-const MAX_CHUNK_SIZE = 45 * 1024 * 1024;
+const MAX_CHUNK_SIZE = 30 * 1024 * 1024;
 
 function shouldChunk(size: number): boolean {
   return size > MAX_CHUNK_SIZE;
