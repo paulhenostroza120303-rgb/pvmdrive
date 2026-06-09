@@ -51,7 +51,12 @@ app.get('/download/:fileId', async (req, res) => {
       const response = await fetch(url);
       const reader = response.body;
       if (!reader) return res.status(500).send('Error reading file stream');
-      return Readable.fromWeb(reader).pipe(res);
+      
+      for await (const chunk of reader) {
+        res.write(chunk);
+      }
+      res.end();
+      return;
     }
 
     // Archivo fragmentado: Unir fragmentos en un stream
