@@ -49,11 +49,13 @@ app.get('/download/:fileId', async (req, res) => {
       // Archivo simple
       const url = await getFileUrl(fileData.telegramFileId);
       const response = await fetch(url);
-      const reader = response.body;
+      const reader = response.body?.getReader();
       if (!reader) return res.status(500).send('Error reading file stream');
       
-      for await (const chunk of reader) {
-        res.write(chunk);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
       }
       res.end();
       return;
@@ -64,11 +66,13 @@ app.get('/download/:fileId', async (req, res) => {
       const chunkData = chunkDoc.data();
       const chunkUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${chunkData.telegramFilePath}`;
       const response = await fetch(chunkUrl);
-      const reader = response.body;
+      const reader = response.body?.getReader();
       if (!reader) continue;
       
-      for await (const chunk of reader) {
-        res.write(chunk);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
       }
     }
     res.end();
