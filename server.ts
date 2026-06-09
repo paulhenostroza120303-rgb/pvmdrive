@@ -8,6 +8,13 @@ import { uploadUserFile, buildFileDownloadResponse, getFileDoc } from './src/lib
 import { decodeUploadFilename, contentDispositionHeader } from './src/lib/filename';
 import { canAccessFile } from './src/lib/sharing';
 import { db } from './src/lib/firebase-admin';
+import { resolveFilePath } from './src/lib/telegram-server';
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+
+function telegramFileUrl(filePath: string) {
+  return `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`;
+}
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -61,10 +68,17 @@ app.get('/download/:fileId', async (req, res) => {
       }
     }
 
-    // Obtener metadata del archivo para Content-Length
+    // Obtener metadata del archivo
     const fileDoc = await getFileDoc(fileId);
     if (!fileDoc) return res.status(404).send('File not found');
 
+    // OPTIMIZACIÓN: Archivos bot (≤20MB) van directo desde Telegram CDN
+    if (fileDoc.storageMethod === 'bot' && fileDoc.telegramFilePath) {
+      const telegramUrl = telegramFileUrl(fileDoc.telegramFilePath);
+      return res.redirect(telegramUrl);
+    }
+
+    // Archivos gramjs/chunked necesitan proxy (no tienen URL pública)
     const download = await buildFileDownloadResponse(fileId);
     if (!download) return res.status(404).send('File not found');
 
