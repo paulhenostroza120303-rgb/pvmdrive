@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { auth } from './src/lib/firebase-admin';
 import { uploadUserFile } from './src/lib/storage-server';
+import { getFileUrl } from './src/lib/telegram-server';
 
 const app = express();
 app.use(cors({
@@ -14,17 +15,61 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Endpoint de salud para probar conexión
+const upload = multer({ 
+  dest: 'uploads/',
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 } 
+});
+
+// Endpoint de Salud
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Upload server is alive!' });
 });
 
-// Configuración de Multer para usar disco en lugar de memoria (Evita crashes con archivos GB)
-const upload = multer({ 
-  dest: 'uploads/',
-  limits: { fileSize: 2 * 1024 * 1024 * 1024 } // Límite de 2GB
+// Endpoint de Descarga Unificada (Ensambla los trozos de Telegram)
+app.get('/download/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const admin = require('firebase-admin');
+    const db = admin.firestore();
+    
+    const fileDoc = await db.collection('files').doc(fileId).get();
+    if (!fileDoc.exists) return res.status(404).send('File not found');
+    
+    const fileData = fileDoc.data();
+    const chunksSnap = await db.collection('file_chunks')
+      .where('fileId', '==', fileId)
+      .orderBy('index', 'asc')
+      .get();
+
+    res.setHeader('Content-Disposition', `attachment; filename="${fileData.name}"`);
+    res.setHeader('Content-Type', fileData.mimeType || 'application/octet-stream');
+
+    if (chunksSnap.empty) {
+      // Archivo simple
+      const url = await getFileUrl(fileData.telegramFileId);
+      const response = await fetch(url);
+      const reader = response.body;
+      return reader.pipe(res);
+    }
+
+    // Archivo fragmentado: Unir fragmentos en un stream
+    for (const chunkDoc of chunksSnap.docs) {
+      const chunkData = chunkDoc.data();
+      const chunkUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${chunkData.telegramFilePath}`;
+      const response = await fetch(chunkUrl);
+      
+      for await (const chunk of response.body) {
+        res.write(chunk);
+      }
+    }
+    res.end();
+  } catch (error) {
+    console.error('Download Error:', error);
+    res.status(500).send('Internal Server Error');
+  }
 });
 
+// Endpoint de Subida
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -41,14 +86,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    // Leer el archivo desde el disco en lugar de la memoria
     const fileBuffer = fs.readFileSync(file.path);
-    
     const result = await uploadUserFile(userId, fileBuffer, file.originalname, file.mimetype, folderId);
     
-    // Borrar el archivo temporal del disco después de subirlo
     fs.unlinkSync(file.path);
-    
     res.json(result);
   } catch (error: any) {
     console.error("Upload Error:", error);
@@ -64,7 +105,6 @@ app.listen(Number(PORT), HOST, () => {
   console.log(`📡 Listening on http://${HOST}:${PORT}`);
 });
 
-// Capturar errores globales para que el servidor no se cierre sin avisar
 process.on('uncaughtException', (err) => {
   console.error('❌ UNCAUGHT EXCEPTION:', err);
 });
