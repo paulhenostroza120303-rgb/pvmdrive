@@ -43,9 +43,9 @@ export async function resolveFilePath(fileId: string, maxAttempts = 15): Promise
 
 async function sendFileChunk(buffer: Buffer, fileName: string, index: number): Promise<TelegramChunk> {
   const formData = new FormData();
-  const blob = new Blob([new Uint8Array(buffer)]);
+  const file = new File([new Uint8Array(buffer)], fileName, { type: "application/octet-stream" });
   formData.append("chat_id", TELEGRAM_CHANNEL_ID);
-  formData.append("document", blob, fileName);
+  formData.append("document", file);
 
   const res = await fetch(`${API_BASE}/sendDocument`, { method: "POST", body: formData });
   if (!res.ok) throw new Error(`Telegram upload failed: ${res.statusText}`);
