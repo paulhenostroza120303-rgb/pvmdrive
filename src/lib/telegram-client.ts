@@ -40,7 +40,7 @@ export async function uploadFileClient(buffer: Buffer, fileName: string): Promis
   
   // Subir el archivo como un único documento (Hasta 2GB)
   const result = await client.sendFile(TARGET_CHANNEL, {
-    file: buffer,
+    buffer: buffer,
     fileName: fileName,
   } as any);
 
