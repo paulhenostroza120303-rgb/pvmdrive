@@ -41,23 +41,25 @@ async function sendFileChunk(buffer: Buffer, fileName: string, index: number): P
 
   const doc = data.result.document || data.result.audio || data.result.video;
   
-  // Intentar obtener el file_path con un pequeño reintento si falla
-  let fileInfoData;
-  let attempts = 0;
-  while (attempts < 3) {
-    try {
-      const fileInfoRes = await fetch(`${API_BASE}/getFile?file_id=${doc.file_id}`);
-      const info = await fileInfoRes.json();
-      if (info.ok && info.result) {
-        fileInfoData = info;
-        break;
+    // Intentar obtener el file_path con un sistema de reintentos más robusto
+    let fileInfoData;
+    let attempts = 0;
+    const maxAttempts = 10; // Aumentado a 10 reintentos
+    while (attempts < maxAttempts) {
+      try {
+        const fileInfoRes = await fetch(`${API_BASE}/getFile?file_id=${doc.file_id}`);
+        const info = await fileInfoRes.json();
+        if (info.ok && info.result) {
+          fileInfoData = info;
+          break;
+        }
+        console.log(`Attempt ${attempts + 1}: Telegram file not ready yet...`);
+      } catch (e) {
+        console.error(`Attempt ${attempts + 1} Error:`, e);
       }
-    } catch (e) {
-      console.error(`Retry ${attempts + 1} for file path...`);
+      attempts++;
+      await new Promise(resolve => setTimeout(resolve, 3000)); // Esperar 3 segundos entre reintentos
     }
-    attempts++;
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Esperar 1 segundo entre reintentos
-  }
 
   if (!fileInfoData || !fileInfoData.result) {
     throw new Error("Could not retrieve file path from Telegram after multiple attempts");
