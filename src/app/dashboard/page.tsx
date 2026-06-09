@@ -35,6 +35,15 @@ interface ClipboardItem {
   sourceFolderId: string | null;
 }
 
+interface DownloadItem {
+  id: string;
+  name: string;
+  size: number;
+  progress: number;
+  status: "downloading" | "done" | "error";
+  error?: string;
+}
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const router = useRouter();
@@ -57,6 +66,8 @@ export default function DashboardPage() {
   const [shareError, setShareError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [clipboard, setClipboard] = useState<ClipboardItem | null>(null);
+  const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [showDownloadPanel, setShowDownloadPanel] = useState(false);
   const [infoModal, setInfoModal] = useState<{ id: string; type: "file" | "folder"; name: string } | null>(null);
   const [infoData, setInfoData] = useState<Record<string, unknown> | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -349,28 +360,70 @@ export default function DashboardPage() {
     fetchContents();
   };
 
-  const downloadFile = async (id: string, fallbackName: string) => {
+  const downloadFile = async (id: string, fallbackName: string, fileSize?: number) => {
     const token = await getToken();
-    // Usar el servidor de Railway directamente para descargar
-    // Railway tiene GramJS configurado para archivos grandes
     const uploadUrl = process.env.NEXT_PUBLIC_UPLOAD_URL || "https://pvmdrive-production.up.railway.app";
+    const downloadId = crypto.randomUUID();
+
+    // Agregar al panel de descargas
+    setDownloads((prev) => [...prev, {
+      id: downloadId, name: fallbackName, size: fileSize || 0, progress: 0, status: "downloading",
+    }]);
+    setShowDownloadPanel(true);
+
     try {
       const res = await fetch(`${uploadUrl}/download/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) { alert("No se pudo descargar el archivo"); return; }
-      const blob = await res.blob();
+
+      if (!res.ok) {
+        setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: "error", error: "Error del servidor" } : d));
+        return;
+      }
+
+      const contentLength = Number(res.headers.get("Content-Length")) || fileSize || 0;
       const disposition = res.headers.get("Content-Disposition") || "";
       const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
       const filename = utf8Match ? decodeURIComponent(utf8Match[1]) : fallbackName;
+
+      if (!res.body) {
+        // Sin stream, descargar como blob directamente
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+        URL.revokeObjectURL(url);
+        setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, progress: 100, status: "done" } : d));
+        setTimeout(() => setDownloads((prev) => prev.filter((d) => d.id !== downloadId)), 3000);
+        return;
+      }
+
+      // Leer el stream con progreso
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let receivedLength = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        receivedLength += value.length;
+        const progress = contentLength > 0 ? Math.round((receivedLength / contentLength) * 100) : 0;
+        setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, progress, size: contentLength || receivedLength } : d));
+      }
+
+      // Crear blob y descargar
+      const blob = new Blob(chunks.map(c => new Uint8Array(c)));
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
+
+      setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, progress: 100, status: "done" } : d));
+      setTimeout(() => setDownloads((prev) => prev.filter((d) => d.id !== downloadId)), 3000);
     } catch {
-      alert("No se pudo descargar el archivo");
+      setDownloads((prev) => prev.map((d) => d.id === downloadId ? { ...d, status: "error", error: "Error de conexión" } : d));
     }
   };
 
@@ -515,7 +568,7 @@ export default function DashboardPage() {
               <FolderIcon className="h-4 w-4 text-amber-500" /> Abrir carpeta
             </button>
           ) : (
-            <button onClick={() => { downloadFile(menu.id, menu.name); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
+            <button onClick={() => { const f = files.find(f => f.id === menu.id); downloadFile(menu.id, menu.name, f?.size); setActiveMenu(null); }} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-gray-100 rounded-lg">
               <Download className="h-4 w-4 text-blue-500" /> Descargar
             </button>
           )}
@@ -848,6 +901,39 @@ export default function DashboardPage() {
                   <span className="text-xs text-gray-400">{formatSize(u.size)}</span>
                 </div>
                 {u.error && <p className="text-xs text-red-500">{u.error}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showDownloadPanel && downloads.length > 0 && (
+        <div className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 sm:w-80 bg-white rounded-xl shadow-2xl border z-50 overflow-hidden">
+          <div className="bg-gray-50 px-4 py-3 flex items-center justify-between border-b">
+            <span className="font-semibold text-sm">
+              {downloads.some((d) => d.status === "downloading") ? "Descargando..." : "Completado"}
+            </span>
+            <button onClick={() => setShowDownloadPanel(false)} className="p-1 hover:bg-gray-200 rounded"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {downloads.map((d) => (
+              <div key={d.id} className="p-3 border-b last:border-b-0">
+                <div className="flex items-center gap-2 mb-1">
+                  {d.status === "downloading" && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
+                  {d.status === "done" && <Check className="h-4 w-4 text-green-500" />}
+                  {d.status === "error" && <AlertCircle className="h-4 w-4 text-red-500" />}
+                  <span className="text-sm truncate flex-1">{d.name}</span>
+                  <span className="text-xs text-gray-400">{formatSize(d.size)}</span>
+                </div>
+                {d.status === "downloading" && d.progress > 0 && (
+                  <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+                    <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${d.progress}%` }} />
+                  </div>
+                )}
+                {d.status === "downloading" && d.progress > 0 && (
+                  <p className="text-xs text-gray-400 mt-0.5">{d.progress}%</p>
+                )}
+                {d.error && <p className="text-xs text-red-500">{d.error}</p>}
               </div>
             ))}
           </div>
