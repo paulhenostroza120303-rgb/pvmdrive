@@ -43,7 +43,7 @@ export async function uploadFileClient(buffer: Buffer, fileName: string): Promis
   const result = await client.sendFile(TARGET_CHANNEL, {
     file: buffer,
     fileName: fileName,
-  });
+  } as any);
 
   // En MTProto, el fileId es el ID del mensaje o la referencia al documento
   // Guardamos la info necesaria para la base de datos
