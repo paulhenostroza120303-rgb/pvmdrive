@@ -47,6 +47,8 @@ async function sendFileChunk(buffer: Buffer, fileName: string, index: number): P
   formData.append("chat_id", TELEGRAM_CHANNEL_ID);
   formData.append("document", file);
 
+  console.log(`[Upload] 📤 Sending chunk ${index + 1}: ${fileName} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
+
   const res = await fetch(`${API_BASE}/sendDocument`, { method: "POST", body: formData });
   if (!res.ok) throw new Error(`Telegram upload failed: ${res.statusText}`);
   const data = await res.json();
@@ -64,6 +66,8 @@ async function sendFileChunk(buffer: Buffer, fileName: string, index: number): P
   if (!filePath) {
     console.warn(`Chunk ${index}: file_path unavailable after retries, storing file_id for download resolution`);
   }
+
+  console.log(`[Upload] ✅ Chunk ${index + 1} uploaded successfully`);
 
   return {
     index,
@@ -106,10 +110,11 @@ export async function uploadFileChunked(buffer: Buffer, fileName: string): Promi
     for (let j = i; j < batchEnd; j++) {
       const start = j * MAX_CHUNK_SIZE;
       const end = Math.min(start + MAX_CHUNK_SIZE, buffer.length);
-      const chunkName = `${crypto.randomUUID()}.bin`;
+      // Nombre descriptivo con .partN
+      const chunkName = `${fileName}.part${j + 1}`;
       const chunkSize = (end - start) / 1024 / 1024;
       
-      console.log(`[Upload]   ├─ Chunk ${j + 1}: ${chunkSize.toFixed(1)} MB`);
+      console.log(`[Upload]   ├─ Chunk ${j + 1}/${totalChunks}: ${chunkName} (${chunkSize.toFixed(1)} MB)`);
       
       // Agregar reintentos para cada chunk
       batchPromises.push(
