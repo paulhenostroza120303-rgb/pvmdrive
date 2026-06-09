@@ -24,8 +24,8 @@ export async function getDownloadUrl(fileId: string) {
   return `https://pvmdrive-production.up.railway.app/download/${fileId}`;
 }
 
-export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileName: string, mimeType: string, folderId?: string) {
-  const result = await uploadFileClient(fileBuffer, fileName);
+export async function uploadUserFile(userId: string, filePath: string, fileName: string, mimeType: string, fileSize: number, folderId?: string) {
+  const result = await uploadFileClient(filePath, fileName, fileSize);
   const fileId = crypto.randomUUID();
   const now = new Date();
 
@@ -34,7 +34,7 @@ export async function uploadUserFile(userId: string, fileBuffer: Buffer, fileNam
     name: fileName,
     originalName: fileName,
     mimeType,
-    size: fileBuffer.length,
+    size: fileSize,
     folderId: folderId || null,
     telegramFileId: result.fileId,
     telegramFilePath: result.filePath,

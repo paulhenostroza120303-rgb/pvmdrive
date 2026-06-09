@@ -1,5 +1,13 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
+class CustomFile {
+  constructor(
+    public name: string,
+    public size: number,
+    public path: string | undefined,
+    public buffer: Buffer | undefined
+  ) {}
+}
 
 const API_ID = Number(process.env.TELEGRAM_API_ID || 0);
 const API_HASH = process.env.TELEGRAM_API_HASH || "";
@@ -29,7 +37,7 @@ export async function getTelegramClient() {
   return client;
 }
 
-export async function uploadFileClient(buffer: Buffer, fileName: string): Promise<{
+export async function uploadFileClient(filePath: string, fileName: string, fileSize: number): Promise<{
   fileId: string;
   filePath: string;
   messageId: number;
@@ -37,9 +45,13 @@ export async function uploadFileClient(buffer: Buffer, fileName: string): Promis
   chunks: null;
 }> {
   const client = await getTelegramClient();
+
+  // Crear un CustomFile con la ruta del archivo para que GramJS lo lea directamente
+  // GramJS usa el buffer si es menor a 20MB y la ruta si es mayor
+  const customFile = new CustomFile(fileName, fileSize, filePath, undefined);
   
-  // Subir el archivo como un único documento (Hasta 2GB)
-  const result = await (client as any).sendFile(TARGET_CHANNEL, buffer, {
+  const result = await (client as any).sendFile(TARGET_CHANNEL, {
+    file: customFile,
     fileName: fileName,
   });
 
