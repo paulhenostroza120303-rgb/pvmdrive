@@ -11,6 +11,13 @@ export async function GET(request: Request) {
     const link = await resolvePublicLink(token);
     if (!link) return NextResponse.json({ error: "Link not found or expired" }, { status: 404 });
 
+    // Si hay folderId, listar contenido de esa subcarpeta
+    const folderId = searchParams.get("folderId");
+    if (folderId) {
+      const contents = await listPublicFolderContents(folderId);
+      return NextResponse.json({ link, folderId, ...contents });
+    }
+
     // Si es carpeta, listar contenido
     if (link.resourceType === "folder") {
       const contents = await listPublicFolderContents(link.resourceId);

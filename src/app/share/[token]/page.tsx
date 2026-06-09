@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { File as FileIcon, Folder as FolderIcon, Download, Loader2, AlertCircle, HardDrive } from "lucide-react";
+import { File as FileIcon, Folder as FolderIcon, Download, Loader2, AlertCircle, ChevronRight, Home } from "lucide-react";
 
 interface PublicLinkInfo {
   token: string;
@@ -30,22 +30,26 @@ export default function SharePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [currentFolderName, setCurrentFolderName] = useState<string>("");
+  const [folderPath, setFolderPath] = useState<{ id: string | null; name: string }[]>([]);
 
   useEffect(() => {
     if (!token) return;
     fetchSharedContent();
   }, [token]);
 
-  const fetchSharedContent = async () => {
+  const fetchSharedContent = async (folderId?: string | null) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/share-links/public?token=${token}`);
+      const url = `/api/share-links/public?token=${token}${folderId ? `&folderId=${folderId}` : ""}`;
+      const res = await fetch(url);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error");
 
       setLink(data.link);
 
-      if (data.link.resourceType === "folder") {
+      if (data.link.resourceType === "folder" || folderId) {
         const allItems = [
           ...(data.folders || []).map((f: Record<string, unknown>) => ({ id: f.id as string, name: f.name as string, type: "folder" as const })),
           ...(data.files || []).map((f: Record<string, unknown>) => ({ id: f.id as string, name: f.name as string, type: "file" as const, size: f.size as number, mimeType: f.mimeType as string })),
@@ -57,6 +61,21 @@ export default function SharePage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const navigateToFolder = (folderId: string | null, folderName: string) => {
+    setCurrentFolderId(folderId);
+    setCurrentFolderName(folderName);
+    if (folderId) {
+      setFolderPath((prev) => {
+        const existing = prev.findIndex((b) => b.id === folderId);
+        if (existing >= 0) return prev.slice(0, existing + 1);
+        return [...prev, { id: folderId, name: folderName }];
+      });
+    } else {
+      setFolderPath([{ id: null, name: link?.resourceName || "Carpeta" }]);
+    }
+    fetchSharedContent(folderId);
   };
 
   const formatSize = (bytes: number) => {
@@ -143,17 +162,43 @@ export default function SharePage() {
   }
 
   // Carpeta compartida
+  const displayName = currentFolderName || link.resourceName;
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b px-6 py-4">
-        <div className="max-w-4xl mx-auto flex items-center gap-3">
-          <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center">
-            <FolderIcon className="h-5 w-5 text-amber-500" />
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center">
+              <FolderIcon className="h-5 w-5 text-amber-500" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg font-semibold text-gray-900 truncate">{displayName}</h1>
+              <p className="text-xs text-gray-400">Carpeta compartida via CloudGram</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">{link.resourceName}</h1>
-            <p className="text-xs text-gray-400">Carpeta compartida via CloudGram</p>
-          </div>
+          {folderPath.length > 1 && (
+            <div className="flex items-center gap-1 text-sm text-gray-500 flex-wrap">
+              <button
+                onClick={() => navigateToFolder(null, link.resourceName)}
+                className="hover:text-blue-600 flex items-center gap-1"
+              >
+                <Home className="h-3 w-3" />
+                {link.resourceName}
+              </button>
+              {folderPath.slice(1).map((crumb, i) => (
+                <span key={crumb.id ?? "root"} className="flex items-center gap-1">
+                  <ChevronRight className="h-3 w-3" />
+                  <button
+                    onClick={() => navigateToFolder(crumb.id, crumb.name)}
+                    className="hover:text-blue-600 truncate max-w-[160px]"
+                  >
+                    {crumb.name}
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </header>
       <main className="max-w-4xl mx-auto p-6">
@@ -175,15 +220,21 @@ export default function SharePage() {
                 {items.map((item) => (
                   <tr key={item.id} className="border-b hover:bg-gray-50 transition">
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        {item.type === "folder" ? (
+                      {item.type === "folder" ? (
+                        <button
+                          onClick={() => navigateToFolder(item.id, item.name)}
+                          className="flex items-center gap-3 w-full text-left"
+                        >
                           <FolderIcon className="h-5 w-5 text-amber-500 shrink-0" />
-                        ) : (
+                          <span className="font-medium text-gray-900 truncate">{item.name}</span>
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-3">
                           <FileIcon className="h-5 w-5 text-blue-500 shrink-0" />
-                        )}
-                        <span className="font-medium text-gray-900 truncate">{item.name}</span>
-                        {item.size && <span className="text-xs text-gray-400 ml-2">{formatSize(item.size)}</span>}
-                      </div>
+                          <span className="font-medium text-gray-900 truncate">{item.name}</span>
+                          {item.size && <span className="text-xs text-gray-400">{formatSize(item.size)}</span>}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {item.type === "file" && (
