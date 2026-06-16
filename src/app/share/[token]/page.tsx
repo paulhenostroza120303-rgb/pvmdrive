@@ -140,7 +140,7 @@ export default function SharePage() {
           </div>
           <h1 className="text-lg font-semibold text-gray-900 mb-1 truncate">{link.resourceName}</h1>
           {link.size && <p className="text-sm text-gray-500 mb-4">{formatSize(link.size)}</p>}
-          <p className="text-xs text-gray-400 mb-6">Compartido via CloudGram</p>
+          <p className="text-xs text-gray-400 mb-6">Compartido via PVM Drive</p>
           {link.permission === "download" || link.permission === "view" ? (
             <button
               onClick={() => downloadFile(link.resourceId, link.resourceName)}
@@ -174,7 +174,7 @@ export default function SharePage() {
             </div>
             <div className="min-w-0 flex-1">
               <h1 className="text-lg font-semibold text-gray-900 truncate">{displayName}</h1>
-              <p className="text-xs text-gray-400">Carpeta compartida via CloudGram</p>
+              <p className="text-xs text-gray-400">Carpeta compartida via PVM Drive</p>
             </div>
           </div>
           {folderPath.length > 1 && (

@@ -5,11 +5,16 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { useRouter } from "next/navigation";
 import { DriveFile, Folder, BreadcrumbItem, ViewMode } from "@/types";
 import { displayFilename } from "@/lib/filename";
+import { getFileStyle } from "@/lib/file-icons";
+import { FileThumbnail } from "@/components/drive/file-thumbnail";
+import { ConfirmDialog, PromptDialog } from "@/components/ui/dialogs";
 import {
   Loader2, Upload, File as FileIcon, Folder as FolderIcon, Plus,
   Trash2, Edit2, Download, ChevronRight, MoreVertical, X, Check, AlertCircle,
   HardDrive, Users, Share2, Home, Menu, Star, Copy, Scissors, ClipboardPaste,
-  Move, Info, FolderInput, StarOff, Link, CopyCheck
+  Move, Info, FolderInput, StarOff, Link, CopyCheck,
+  FolderOpen, Clock, UploadCloud, FolderUp,
+  LayoutGrid, List as ListIcon
 } from "lucide-react";
 
 interface UploadItem {
@@ -81,12 +86,31 @@ export default function DashboardPage() {
   const [trashView, setTrashView] = useState(false);
   const [trashItems, setTrashItems] = useState<Array<{ id: string; type: "file" | "folder"; name: string; size?: number; deletedAt?: any }>>([]);
   const [trashLoading, setTrashLoading] = useState(false);
+  const [storage, setStorage] = useState<{ used: number; limit: number } | null>(null);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; type: "file" | "folder"; name: string } | null>(null);
+  const [confirmState, setConfirmState] = useState<{ title: string; message?: string; danger?: boolean; confirmText?: string; onConfirm: () => void } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!user) router.push("/login");
     else fetchContents();
-  }, [user, currentFolderId, viewMode]);
+  }, [user, currentFolderId, viewMode, trashView]);
+
+  // Cargar uso de almacenamiento al iniciar y tras subir/borrar
+  const fetchStorage = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/storage", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setStorage(await res.json());
+    } catch { /* ignorar */ }
+  }, [user]);
+
+  useEffect(() => { fetchStorage(); }, [fetchStorage]);
 
   // Reordenar cuando cambien los criterios de ordenamiento
   useEffect(() => {
@@ -152,10 +176,12 @@ export default function DashboardPage() {
         return;
       }
       
-      const sharedRoot = viewMode === "shared" && !currentFolderId;
-      const url = sharedRoot
-        ? `/api/files?shared=true`
-        : `/api/files?parentId=${currentFolderId || ""}`;
+      const atRoot = !currentFolderId;
+      let url: string;
+      if (viewMode === "shared" && atRoot) url = `/api/files?shared=true`;
+      else if (viewMode === "starred" && atRoot) url = `/api/files?starred=true`;
+      else if (viewMode === "recent" && atRoot) url = `/api/files?recent=true`;
+      else url = `/api/files?parentId=${currentFolderId || ""}`;
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error cargando archivos");
@@ -169,7 +195,7 @@ export default function DashboardPage() {
       
       setFiles(filteredFiles);
       setFolders(filteredFolders);
-      setIsSharedView(Boolean(data.isSharedView || sharedRoot));
+      setIsSharedView(Boolean(data.isSharedView || (viewMode === "shared" && atRoot)));
     } catch (err: unknown) {
       console.error(err);
     } finally {
@@ -208,10 +234,24 @@ export default function DashboardPage() {
     }
   };
 
+  const viewLabel = (mode: ViewMode) =>
+    mode === "shared" ? "Compartido conmigo"
+    : mode === "starred" ? "Destacados"
+    : mode === "recent" ? "Recientes"
+    : "Mi unidad";
+
   const switchView = (mode: ViewMode) => {
+    setTrashView(false);
     setViewMode(mode);
     setCurrentFolderId(null);
-    setBreadcrumbs([{ id: null, name: mode === "shared" ? "Compartido conmigo" : "Mi unidad" }]);
+    setSidebarOpen(false);
+    setBreadcrumbs([{ id: null, name: viewLabel(mode) }]);
+  };
+
+  const openTrash = () => {
+    setTrashView(true);
+    setCurrentFolderId(null);
+    setSidebarOpen(false);
   };
 
   const uploadFile = async (file: File, folderId: string | null, token: string) => {
@@ -242,6 +282,7 @@ export default function DashboardPage() {
       setUploads((prev) => prev.map((u) => u.id === uploadId ? { ...u, progress: 100, status: "done" } : u));
       setTimeout(() => setUploads((prev) => prev.filter((u) => u.id !== uploadId)), 3000);
       fetchContents();
+      fetchStorage();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error desconocido";
       setUploads((prev) => prev.map((u) => u.id === uploadId ? { ...u, status: "error", error: message } : u));
@@ -256,6 +297,32 @@ export default function DashboardPage() {
       await uploadFile(file, currentFolderId, token);
     }
     e.target.value = "";
+  };
+
+  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    if (!fileList?.length || isSharedView) return;
+    const token = await getToken();
+    // Reconstruir el árbol de carpetas a partir de webkitRelativePath
+    const folderCache = new Map<string, string | null>();
+    folderCache.set("", currentFolderId);
+    for (const file of Array.from(fileList)) {
+      const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+      const parts = rel.split("/");
+      const dirs = parts.slice(0, -1);
+      let parentId = currentFolderId;
+      let accum = "";
+      for (const dir of dirs) {
+        accum = accum ? `${accum}/${dir}` : dir;
+        if (folderCache.has(accum)) { parentId = folderCache.get(accum)!; continue; }
+        const newId = await createFolderInDB(dir, parentId, token);
+        folderCache.set(accum, newId);
+        parentId = newId;
+      }
+      await uploadFile(file, parentId, token);
+    }
+    e.target.value = "";
+    fetchContents();
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -324,28 +391,36 @@ export default function DashboardPage() {
     return data.id;
   };
 
-  const createFolder = async () => {
-    const name = prompt("Nombre de la carpeta:");
-    if (!name?.trim() || isSharedView) return;
+  const doCreateFolder = async (name: string) => {
+    if (!name.trim() || isSharedView) return;
     const token = await getToken();
     await fetch("/api/folders", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ name: name.trim(), parentId: currentFolderId }),
     });
+    setNewFolderOpen(false);
     fetchContents();
   };
 
-  const deleteItem = async (id: string, type: "file" | "folder") => {
-    if (!confirm(`¿Borrar ${type === "file" ? "archivo" : "carpeta"}?`)) return;
-    const token = await getToken();
-    await fetch(`/api/items/${id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ type }),
-    });
+  const deleteItem = (id: string, type: "file" | "folder", name?: string) => {
     setActiveMenu(null);
-    fetchContents();
+    setConfirmState({
+      title: `¿Mover a la papelera?`,
+      message: `"${displayFilename(name || "")}" se moverá a la papelera. Podrás restaurarlo más tarde.`,
+      danger: true,
+      confirmText: "Mover a papelera",
+      onConfirm: async () => {
+        const token = await getToken();
+        await fetch(`/api/items/${id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ type }),
+        });
+        fetchContents();
+        fetchStorage();
+      },
+    });
   };
 
   // Restaurar desde papelera
@@ -363,45 +438,65 @@ export default function DashboardPage() {
   };
 
   // Eliminar permanentemente
-  const permanentDelete = async (id: string, type: "file" | "folder") => {
-    if (!confirm(`¿Eliminar permanentemente? Esta acción no se puede deshacer.`)) return;
-    const token = await getToken();
-    try {
-      await fetch(`/api/trash/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      fetchContents(); // Recargar papelera
-    } catch (err) {
-      console.error(err);
-    }
+  const permanentDelete = (id: string, type: "file" | "folder", name?: string) => {
+    setConfirmState({
+      title: "¿Eliminar permanentemente?",
+      message: `"${displayFilename(name || "")}" se eliminará para siempre. Esta acción no se puede deshacer.`,
+      danger: true,
+      confirmText: "Eliminar para siempre",
+      onConfirm: async () => {
+        const token = await getToken();
+        try {
+          await fetch(`/api/trash/${id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          fetchContents();
+          fetchStorage();
+        } catch (err) {
+          console.error(err);
+        }
+      },
+    });
   };
 
   // Vaciar papelera completa
-  const emptyTrash = async () => {
-    if (!confirm(`¿Vaciar toda la papelera? Esta acción no se puede deshacer.`)) return;
-    const token = await getToken();
-    try {
-      await fetch('/api/trash', {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      fetchContents();
-    } catch (err) {
-      console.error(err);
-    }
+  const emptyTrash = () => {
+    setConfirmState({
+      title: "¿Vaciar la papelera?",
+      message: "Todos los elementos se eliminarán permanentemente. Esta acción no se puede deshacer.",
+      danger: true,
+      confirmText: "Vaciar papelera",
+      onConfirm: async () => {
+        const token = await getToken();
+        try {
+          await fetch('/api/trash', {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          fetchContents();
+          fetchStorage();
+        } catch (err) {
+          console.error(err);
+        }
+      },
+    });
   };
 
-  const renameItem = async (id: string, type: "file" | "folder", currentName: string) => {
-    const newName = prompt("Nuevo nombre:", currentName);
-    if (!newName) return;
+  const renameItem = (id: string, type: "file" | "folder", currentName: string) => {
+    setActiveMenu(null);
+    setRenameTarget({ id, type, name: displayFilename(currentName) });
+  };
+
+  const doRename = async (newName: string) => {
+    if (!renameTarget || !newName.trim()) return;
     const token = await getToken();
-    await fetch(`/api/items/${id}`, {
+    await fetch(`/api/items/${renameTarget.id}`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName, type }),
+      body: JSON.stringify({ name: newName.trim(), type: renameTarget.type }),
     });
-    setActiveMenu(null);
+    setRenameTarget(null);
     fetchContents();
   };
 
@@ -919,8 +1014,8 @@ export default function DashboardPage() {
           {canEdit && (
             <>
               <hr className="my-1" />
-              <button onClick={() => deleteItem(menu.id, menu.type)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
-                <Trash2 className="h-4 w-4" /> Borrar
+              <button onClick={() => deleteItem(menu.id, menu.type, menu.name)} className="flex items-center gap-2.5 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">
+                <Trash2 className="h-4 w-4" /> Mover a papelera
               </button>
             </>
           )}
@@ -939,38 +1034,108 @@ export default function DashboardPage() {
         />
       )}
 
-      <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r flex flex-col transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-        <div className="p-6 border-b">
-          <h2 className="text-xl font-bold text-blue-600">CloudGram</h2>
-          <p className="text-xs text-gray-500 mt-1 truncate">{user?.email}</p>
+      <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r border-slate-200 flex flex-col transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+        {/* Marca */}
+        <div className="px-5 pt-5 pb-3 flex items-center gap-2.5">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-sm">
+            <HardDrive className="h-5 w-5 text-white" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold text-slate-800 leading-tight">PVM Drive</h2>
+            <p className="text-[11px] text-slate-400 truncate">{user?.email}</p>
+          </div>
         </div>
-        <nav className="p-3 flex-1 space-y-1">
+
+        {/* Botón Nuevo */}
+        <div className="px-4 pb-2 relative">
           <button
-            onClick={() => switchView("drive")}
-            className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${viewMode === "drive" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+            onClick={() => setNewMenuOpen((v) => !v)}
+            className="flex items-center gap-3 pl-4 pr-5 py-3 rounded-2xl bg-white border border-slate-200 shadow-[0_1px_3px_rgba(0,0,0,0.08)] hover:shadow-md hover:bg-slate-50 transition text-sm font-medium text-slate-700"
           >
-            <HardDrive className="h-4 w-4" /> Mi unidad
+            <Plus className="h-5 w-5 text-blue-600" /> Nuevo
           </button>
+          {newMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setNewMenuOpen(false)} />
+              <div className="absolute left-4 top-full mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 w-56 animate-pop-in">
+                <button
+                  onClick={() => { setNewMenuOpen(false); setNewFolderOpen(true); }}
+                  className="flex items-center gap-3 w-full px-4 py-2.5 text-sm hover:bg-slate-100 text-slate-700"
+                >
+                  <FolderIcon className="h-4 w-4 text-amber-500" /> Nueva carpeta
+                </button>
+                <hr className="my-1 border-slate-100" />
+                <button
+                  onClick={() => { setNewMenuOpen(false); fileInputRef.current?.click(); }}
+                  className="flex items-center gap-3 w-full px-4 py-2.5 text-sm hover:bg-slate-100 text-slate-700"
+                >
+                  <UploadCloud className="h-4 w-4 text-blue-500" /> Subir archivos
+                </button>
+                <button
+                  onClick={() => { setNewMenuOpen(false); folderInputRef.current?.click(); }}
+                  className="flex items-center gap-3 w-full px-4 py-2.5 text-sm hover:bg-slate-100 text-slate-700"
+                >
+                  <FolderUp className="h-4 w-4 text-blue-500" /> Subir carpeta
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Navegación */}
+        <nav className="px-3 flex-1 space-y-0.5 mt-1 overflow-y-auto">
+          {([
+            { mode: "drive" as const, icon: HardDrive, label: "Mi unidad" },
+            { mode: "starred" as const, icon: Star, label: "Destacados" },
+            { mode: "recent" as const, icon: Clock, label: "Recientes" },
+            { mode: "shared" as const, icon: Users, label: "Compartido conmigo" },
+          ]).map(({ mode, icon: Icon, label }) => {
+            const active = !trashView && viewMode === mode;
+            return (
+              <button
+                key={mode}
+                onClick={() => switchView(mode)}
+                className={`flex items-center gap-3 w-full pl-4 pr-3 py-2.5 rounded-full text-sm font-medium transition ${active ? "bg-blue-100 text-blue-800" : "text-slate-600 hover:bg-slate-100"}`}
+              >
+                <Icon className={`h-[18px] w-[18px] ${active ? "text-blue-700" : "text-slate-500"}`} /> {label}
+              </button>
+            );
+          })}
           <button
-            onClick={() => switchView("shared")}
-            className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${viewMode === "shared" ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
+            onClick={openTrash}
+            className={`flex items-center gap-3 w-full pl-4 pr-3 py-2.5 rounded-full text-sm font-medium transition ${trashView ? "bg-blue-100 text-blue-800" : "text-slate-600 hover:bg-slate-100"}`}
           >
-            <Users className="h-4 w-4" /> Compartido conmigo
-          </button>
-          <button
-            onClick={() => { setTrashView(!trashView); setCurrentFolderId(null); }}
-            className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition ${trashView ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-100"}`}
-          >
-            <Trash2 className="h-4 w-4" /> Papelera
+            <Trash2 className={`h-[18px] w-[18px] ${trashView ? "text-blue-700" : "text-slate-500"}`} /> Papelera
           </button>
         </nav>
-        {viewMode === "drive" && !isSharedView && (
-          <div className="p-4 border-t space-y-2">
-            <button onClick={createFolder} className="flex items-center gap-2 w-full p-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
-              <Plus className="h-4 w-4" /> Nueva carpeta
-            </button>
+
+        {/* Barra de almacenamiento */}
+        <div className="p-4 border-t border-slate-100">
+          <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
+            <HardDrive className="h-4 w-4" /> Almacenamiento
           </div>
-        )}
+          <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                storage && storage.used / storage.limit > 0.9 ? "bg-red-500" : "bg-blue-600"
+              }`}
+              style={{ width: `${storage ? Math.min(100, (storage.used / storage.limit) * 100) : 0}%` }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-2">
+            {storage ? `${formatSize(storage.used)} de ${formatSize(storage.limit)}` : "Calculando…"}
+          </p>
+        </div>
+
+        {/* Inputs ocultos para subir */}
+        <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
+        <input
+          ref={folderInputRef}
+          type="file"
+          className="hidden"
+          onChange={handleFolderSelect}
+          {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+        />
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0">
@@ -1030,23 +1195,24 @@ export default function DashboardPage() {
                 </div>
               )}
               
-              {/* Toggle vista lista/grid */}
+              {/* Toggle vista cuadrícula/lista */}
               {!trashView && (
-                <button
-                  onClick={() => setListView(!listView)}
-                  className="bg-gray-100 text-gray-700 p-2 rounded-lg hover:bg-gray-200 transition"
-                  title={listView ? "Vista de cuadrícula" : "Vista de lista"}
-                >
-                  {listView ? (
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                    </svg>
-                  ) : (
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                    </svg>
-                  )}
-                </button>
+                <div className="flex items-center bg-slate-100 rounded-full p-0.5">
+                  <button
+                    onClick={() => setListView(false)}
+                    className={`p-1.5 rounded-full transition ${!listView ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                    title="Vista de cuadrícula"
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setListView(true)}
+                    className={`p-1.5 rounded-full transition ${listView ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                    title="Vista de lista"
+                  >
+                    <ListIcon className="h-4 w-4" />
+                  </button>
+                </div>
               )}
               
               {/* Control de ordenamiento */}
@@ -1187,131 +1353,166 @@ export default function DashboardPage() {
           ) : loading ? (
             <div className="flex justify-center p-20"><Loader2 className="animate-spin h-8 w-8 text-blue-600" /></div>
           ) : files.length === 0 && folders.length === 0 ? (
-            <div className="text-center py-20 text-gray-500">
-              <FolderIcon className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-              <p className="font-medium">Esta carpeta está vacía</p>
-              <p className="text-sm mt-1">{viewMode === "shared" ? "Nadie ha compartido archivos contigo aún" : "Sube archivos o crea una carpeta"}</p>
+            <div className="text-center py-24 text-slate-400">
+              {viewMode === "starred" ? <Star className="h-14 w-14 mx-auto mb-3 text-slate-200" />
+                : viewMode === "recent" ? <Clock className="h-14 w-14 mx-auto mb-3 text-slate-200" />
+                : viewMode === "shared" ? <Users className="h-14 w-14 mx-auto mb-3 text-slate-200" />
+                : <FolderOpen className="h-14 w-14 mx-auto mb-3 text-slate-200" />}
+              <p className="font-medium text-slate-500">
+                {viewMode === "starred" ? "No tienes elementos destacados"
+                  : viewMode === "recent" ? "No hay archivos recientes"
+                  : viewMode === "shared" ? "Nada compartido contigo aún"
+                  : "Esta carpeta está vacía"}
+              </p>
+              <p className="text-sm mt-1">
+                {viewMode === "starred" ? "Marca archivos con ⭐ para verlos aquí"
+                  : viewMode === "shared" ? "Cuando alguien comparta algo aparecerá aquí"
+                  : viewMode === "recent" ? "Sube archivos para verlos aquí"
+                  : "Arrastra archivos o usa el botón Nuevo"}
+              </p>
             </div>
-          ) : (
-            <>
-              {/* Desktop table view */}
-              <div className="hidden sm:block bg-white rounded-xl border shadow-sm overflow-hidden">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="bg-gray-50 border-b text-gray-500 text-xs uppercase tracking-wide">
-                      <th className="px-4 py-3 font-medium">Nombre</th>
-                      <th className="px-4 py-3 font-medium hidden sm:table-cell">Tamaño</th>
-                      <th className="px-4 py-3 font-medium hidden md:table-cell">Compartido por</th>
-                      <th className="px-4 py-3 font-medium text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {folders.map((folder) => (
-                      <tr
-                        key={folder.id}
-                        className={`border-b hover:bg-gray-50 transition group ${clipboard?.id === folder.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
-                        onContextMenu={(e) => handleContextMenu(e, folder.id, "folder", folder.name)}
-                      >
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-3">
-                            {folder.starred && <Star className="h-3 w-3 text-amber-400 shrink-0 fill-amber-400" />}
-                            <button
-                              onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
-                              className="flex items-center gap-3 w-full text-left"
-                            >
-                              <FolderIcon className="h-5 w-5 text-amber-500 shrink-0" />
-                              <span className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</span>
-                            </button>
+          ) : listView ? (
+            /* ===================== VISTA DE LISTA ===================== */
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-slate-100 text-slate-400 text-xs uppercase tracking-wide">
+                    <th className="px-4 py-3 font-medium">Nombre</th>
+                    <th className="px-4 py-3 font-medium hidden sm:table-cell">Tamaño</th>
+                    <th className="px-4 py-3 font-medium hidden md:table-cell">Compartido por</th>
+                    <th className="px-4 py-3 font-medium text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {folders.map((folder) => (
+                    <tr
+                      key={folder.id}
+                      className={`border-b border-slate-50 hover:bg-blue-50/40 transition group cursor-pointer ${clipboard?.id === folder.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
+                      onContextMenu={(e) => handleContextMenu(e, folder.id, "folder", folder.name)}
+                      onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
+                    >
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
+                            <FolderIcon className="h-5 w-5 text-amber-500" />
                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-gray-400 text-sm hidden sm:table-cell">—</td>
-                        <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{folder.sharedBy || "—"}</td>
-                        <td className="px-4 py-3 text-right">
-                          <button onClick={(e) => { e.stopPropagation(); setActiveMenu({ id: folder.id, type: "folder", name: folder.name, x: e.clientX, y: e.clientY }); }} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
-                            <MoreVertical className="h-4 w-4 text-gray-500" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {files.map((file) => (
+                          <span className="font-medium text-slate-700 truncate">{displayFilename(folder.name)}</span>
+                          {folder.starred && <Star className="h-3.5 w-3.5 text-amber-400 shrink-0 fill-amber-400" />}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-400 text-sm hidden sm:table-cell">—</td>
+                      <td className="px-4 py-2.5 text-slate-500 text-sm hidden md:table-cell">{folder.sharedBy || "—"}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        <button onClick={(e) => { e.stopPropagation(); setActiveMenu({ id: folder.id, type: "folder", name: folder.name, x: e.clientX, y: e.clientY }); }} className="p-1.5 hover:bg-slate-200 rounded-full opacity-0 group-hover:opacity-100 transition">
+                          <MoreVertical className="h-4 w-4 text-slate-500" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {files.map((file) => {
+                    const style = getFileStyle(file.mimeType, file.name);
+                    return (
                       <tr
                         key={file.id}
-                        className={`border-b hover:bg-gray-50 transition group ${clipboard?.id === file.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
+                        className={`border-b border-slate-50 hover:bg-blue-50/40 transition group cursor-pointer ${clipboard?.id === file.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
                         onContextMenu={(e) => handleContextMenu(e, file.id, "file", file.name)}
+                        onClick={() => previewFile(file.id, file.name, file.mimeType || "application/octet-stream")}
                       >
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-2.5">
                           <div className="flex items-center gap-3">
-                            {file.starred && <Star className="h-3 w-3 text-amber-400 shrink-0 fill-amber-400" />}
-                            <FileIcon className="h-5 w-5 text-blue-500 shrink-0" />
-                            <span className="font-medium text-gray-900 truncate">{displayFilename(file.name)}</span>
+                            <FileThumbnail
+                              fileId={file.id} name={file.name} mimeType={file.mimeType} size={file.size}
+                              getToken={getToken} iconClassName="h-5 w-5"
+                              className="h-9 w-9 rounded-lg shrink-0"
+                            />
+                            <span className="font-medium text-slate-700 truncate">{displayFilename(file.name)}</span>
+                            {file.starred && <Star className="h-3.5 w-3.5 text-amber-400 shrink-0 fill-amber-400" />}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-gray-500 text-sm hidden sm:table-cell">{formatSize(file.size)}</td>
-                        <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">{file.sharedBy || "—"}</td>
-                        <td className="px-4 py-3 text-right">
-                          <button onClick={(e) => { e.stopPropagation(); setActiveMenu({ id: file.id, type: "file", name: file.name, x: e.clientX, y: e.clientY }); }} className="p-1.5 hover:bg-gray-200 rounded-lg opacity-0 group-hover:opacity-100 transition">
-                            <MoreVertical className="h-4 w-4 text-gray-500" />
+                        <td className="px-4 py-2.5 text-slate-500 text-sm hidden sm:table-cell">{formatSize(file.size)}</td>
+                        <td className="px-4 py-2.5 text-slate-500 text-sm hidden md:table-cell">{file.sharedBy || "—"}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <button onClick={(e) => { e.stopPropagation(); setActiveMenu({ id: file.id, type: "file", name: file.name, x: e.clientX, y: e.clientY }); }} className="p-1.5 hover:bg-slate-200 rounded-full opacity-0 group-hover:opacity-100 transition">
+                            <MoreVertical className="h-4 w-4 text-slate-500" />
                           </button>
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Mobile card view */}
-              <div className="sm:hidden space-y-3">
-                {folders.map((folder) => (
-                  <div
-                    key={folder.id}
-                    className={`bg-white rounded-xl border shadow-sm p-4 ${clipboard?.id === folder.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
-                    onContextMenu={(e) => handleContextMenu(e, folder.id, "folder", folder.name)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <button
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            /* ===================== VISTA DE CUADRÍCULA ===================== */
+            <div className="space-y-6">
+              {folders.length > 0 && (
+                <section>
+                  <h3 className="text-sm font-medium text-slate-600 mb-3">Carpetas</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+                    {folders.map((folder) => (
+                      <div
+                        key={folder.id}
                         onClick={() => navigateToFolder(folder.id, displayFilename(folder.name))}
-                        className="flex items-center gap-3 flex-1 text-left"
+                        onContextMenu={(e) => handleContextMenu(e, folder.id, "folder", folder.name)}
+                        className={`group relative flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-3.5 py-3 cursor-pointer hover:shadow-md hover:border-slate-300 transition ${clipboard?.id === folder.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
                       >
-                        <FolderIcon className="h-8 w-8 text-amber-500 shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1">
-                            {folder.starred && <Star className="h-3 w-3 text-amber-400 fill-amber-400" />}
-                            <p className="font-medium text-gray-900 truncate">{displayFilename(folder.name)}</p>
-                          </div>
-                          <p className="text-xs text-gray-500">Carpeta</p>
-                        </div>
-                      </button>
-                      <button onClick={(e) => setActiveMenu({ id: folder.id, type: "folder", name: folder.name, x: e.clientX, y: e.clientY })} className="p-2 hover:bg-gray-100 rounded-lg">
-                        <MoreVertical className="h-5 w-5 text-gray-500" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {files.map((file) => (
-                  <div
-                    key={file.id}
-                    className={`bg-white rounded-xl border shadow-sm p-4 ${clipboard?.id === file.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
-                    onContextMenu={(e) => handleContextMenu(e, file.id, "file", file.name)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <FileIcon className="h-8 w-8 text-blue-500 shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1">
-                            {file.starred && <Star className="h-3 w-3 text-amber-400 fill-amber-400" />}
-                            <p className="font-medium text-gray-900 truncate">{displayFilename(file.name)}</p>
-                          </div>
-                          <p className="text-xs text-gray-500">{formatSize(file.size)}</p>
-                        </div>
+                        <FolderIcon className="h-6 w-6 text-amber-500 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700 truncate flex-1">{displayFilename(folder.name)}</span>
+                        {folder.starred && <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400 shrink-0" />}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setActiveMenu({ id: folder.id, type: "folder", name: folder.name, x: e.clientX, y: e.clientY }); }}
+                          className="p-1 hover:bg-slate-100 rounded-full opacity-0 group-hover:opacity-100 transition shrink-0"
+                        >
+                          <MoreVertical className="h-4 w-4 text-slate-500" />
+                        </button>
                       </div>
-                      <button onClick={(e) => setActiveMenu({ id: file.id, type: "file", name: file.name, x: e.clientX, y: e.clientY })} className="p-2 hover:bg-gray-100 rounded-lg shrink-0">
-                        <MoreVertical className="h-5 w-5 text-gray-500" />
-                      </button>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </>
+                </section>
+              )}
+
+              {files.length > 0 && (
+                <section>
+                  <h3 className="text-sm font-medium text-slate-600 mb-3">Archivos</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+                    {files.map((file) => {
+                      const style = getFileStyle(file.mimeType, file.name);
+                      const TypeIcon = style.icon;
+                      return (
+                        <div
+                          key={file.id}
+                          onClick={() => previewFile(file.id, file.name, file.mimeType || "application/octet-stream")}
+                          onContextMenu={(e) => handleContextMenu(e, file.id, "file", file.name)}
+                          className={`group relative bg-white border border-slate-200 rounded-xl overflow-hidden cursor-pointer hover:shadow-md hover:border-slate-300 transition ${clipboard?.id === file.id && clipboard.action === "cut" ? "opacity-50" : ""}`}
+                        >
+                          {file.starred && (
+                            <div className="absolute top-2 left-2 z-10 h-6 w-6 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-sm">
+                              <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400" />
+                            </div>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setActiveMenu({ id: file.id, type: "file", name: file.name, x: e.clientX, y: e.clientY }); }}
+                            className="absolute top-2 right-2 z-10 h-7 w-7 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition"
+                          >
+                            <MoreVertical className="h-4 w-4 text-slate-600" />
+                          </button>
+                          <FileThumbnail
+                            fileId={file.id} name={file.name} mimeType={file.mimeType} size={file.size}
+                            getToken={getToken} iconClassName="h-12 w-12"
+                            className="aspect-[4/3] w-full"
+                          />
+                          <div className="flex items-center gap-2 px-3 py-2.5 border-t border-slate-100">
+                            <TypeIcon className={`h-4 w-4 shrink-0 ${style.color}`} />
+                            <span className="text-sm font-medium text-slate-700 truncate flex-1">{displayFilename(file.name)}</span>
+                            <span className="text-[11px] text-slate-400 shrink-0">{formatSize(file.size)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+            </div>
           )}
         </div>
       </main>
@@ -1476,7 +1677,7 @@ export default function DashboardPage() {
                 </ul>
               </div>
             )}
-            <p className="text-xs text-gray-400 mt-4">La persona debe tener cuenta en CloudGram con ese correo.</p>
+            <p className="text-xs text-gray-400 mt-4">La persona debe tener cuenta en PVM Drive con ese correo.</p>
           </div>
         </>
       )}
@@ -1568,6 +1769,40 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+
+      {/* Diálogo: nueva carpeta */}
+      <PromptDialog
+        open={newFolderOpen}
+        title="Nueva carpeta"
+        label="Nombre de la carpeta"
+        placeholder="Carpeta sin título"
+        defaultValue="Carpeta sin título"
+        confirmText="Crear"
+        onConfirm={doCreateFolder}
+        onCancel={() => setNewFolderOpen(false)}
+      />
+
+      {/* Diálogo: renombrar */}
+      <PromptDialog
+        open={!!renameTarget}
+        title="Cambiar nombre"
+        label="Nuevo nombre"
+        defaultValue={renameTarget?.name || ""}
+        confirmText="Guardar"
+        onConfirm={doRename}
+        onCancel={() => setRenameTarget(null)}
+      />
+
+      {/* Diálogo: confirmaciones */}
+      <ConfirmDialog
+        open={!!confirmState}
+        title={confirmState?.title || ""}
+        message={confirmState?.message}
+        danger={confirmState?.danger}
+        confirmText={confirmState?.confirmText}
+        onConfirm={() => { confirmState?.onConfirm(); setConfirmState(null); }}
+        onCancel={() => setConfirmState(null)}
+      />
     </div>
   );
 }

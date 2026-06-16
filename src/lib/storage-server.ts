@@ -304,6 +304,65 @@ export async function listFolderContents(userId: string, userEmail: string, pare
   return { files, folders, isSharedView: Boolean(parentId && !isOwner) };
 }
 
+const mapItemName = (data: Record<string, unknown>) => ({
+  ...data,
+  name: displayFilename(String(data.name || "")),
+  originalName: data.originalName ? displayFilename(String(data.originalName)) : undefined,
+});
+
+/** Archivos y carpetas marcados como favoritos (en todas las carpetas). */
+export async function listStarred(userId: string) {
+  const [filesSnap, foldersSnap] = await Promise.all([
+    db.collection(FILES_COLLECTION).where("ownerId", "==", userId).get(),
+    db.collection(FOLDERS_COLLECTION).where("ownerId", "==", userId).get(),
+  ]);
+
+  const files = filesSnap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .filter((d: any) => d.starred && !d.trashed)
+    .map((d) => ({ ...mapItemName(d), id: (d as any).id, type: "file" }));
+
+  const folders = foldersSnap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .filter((d: any) => d.starred && !d.trashed)
+    .map((d) => ({ ...mapItemName(d), id: (d as any).id, type: "folder" }));
+
+  return { files, folders, isSharedView: false };
+}
+
+/** Archivos modificados recientemente (últimos `limit`, más nuevos primero). */
+export async function listRecent(userId: string, limit = 50) {
+  const filesSnap = await db.collection(FILES_COLLECTION).where("ownerId", "==", userId).get();
+
+  const files = filesSnap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .filter((d: any) => !d.trashed)
+    .sort((a: any, b: any) => {
+      const ta = new Date(a.updatedAt?.toDate?.() ?? a.updatedAt ?? a.createdAt ?? 0).getTime();
+      const tb = new Date(b.updatedAt?.toDate?.() ?? b.updatedAt ?? b.createdAt ?? 0).getTime();
+      return tb - ta;
+    })
+    .slice(0, limit)
+    .map((d) => ({ ...mapItemName(d), id: (d as any).id, type: "file" }));
+
+  return { files, folders: [], isSharedView: false };
+}
+
+/** Uso de almacenamiento del usuario (bytes usados y límite). */
+export async function getStorageUsage(userId: string) {
+  const filesSnap = await db.collection(FILES_COLLECTION).where("ownerId", "==", userId).get();
+  let used = 0;
+  let count = 0;
+  for (const doc of filesSnap.docs) {
+    const data = doc.data() as any;
+    if (data.trashed) continue;
+    used += Number(data.size) || 0;
+    count += 1;
+  }
+  const limit = 15 * 1024 * 1024 * 1024; // 15 GB por defecto, estilo Drive
+  return { used, limit, fileCount: count };
+}
+
 export async function getFileDoc(fileId: string) {
   const doc = await db.collection(FILES_COLLECTION).doc(fileId).get();
   if (!doc.exists) return null;

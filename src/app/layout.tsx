@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import { AuthProvider } from "@/components/auth/auth-provider";
 
 export const metadata: Metadata = {
-  title: "CloudGram Drive",
-  description: "Cloud storage via Telegram",
+  title: "PVM Drive",
+  description: "Tu almacenamiento en la nube",
 };
 
 export default function RootLayout({
